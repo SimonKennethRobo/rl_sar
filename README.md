@@ -252,6 +252,21 @@ Visit [http://robot.robotsfan.com/](http://robot.robotsfan.com/), fill in the IP
 
 ### Control with Gamepad or Keyboard
 
+MuJoCo direct joystick mode (`USE_JOYLINK=OFF`) reads `joystick_device` from
+`policy/<robot_name>/base.yaml` at startup. For example, under the `go2_x5` key:
+
+```yaml
+go2_x5:
+  joystick_device: "/dev/input/js1"
+```
+
+A joystick symlink under `/dev/input/by-id/` also works. Omitting the setting
+defaults to `/dev/input/js0`; setting it to `""` disables joystick input and keeps
+keyboard control, useful when a NoMachine virtual mouse occupies `js0`. If the
+device cannot be opened, keyboard control remains available and no other joystick
+is selected. Restart the program after editing; no rebuild is needed. JoyLink
+mode continues to use its own configuration for device selection.
+
 | Gamepad Control        | Keyboard Control | Description                                                                                                                          |
 | ---------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | **Basic**        |                  |                                                                                                                                      |

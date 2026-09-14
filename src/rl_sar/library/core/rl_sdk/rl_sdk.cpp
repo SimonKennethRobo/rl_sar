@@ -5,6 +5,7 @@
 
 #include "rl_sdk.hpp"
 
+#include <array>
 #include <map>
 
 void RL::StateController(const RobotState<float>* state, RobotCommand<float>* command)
@@ -113,8 +114,28 @@ void RL::StateController(const RobotState<float>* state, RobotCommand<float>* co
 std::vector<float> RL::ComputeObservation()
 {
     std::vector<std::vector<float>> obs_list;
+    const auto observation_terms = this->params.Get<std::vector<std::string>>("observations");
+    // One command snapshot and one stand decision for both command and clock
+    // observations. Keep the configured walking frequency intact for restart.
+    const std::array<float, 6> dog_command = {
+        control.x, control.y, control.yaw, control.body_pitch, control.body_roll, control.body_height};
+    const float command_norm = std::sqrt(dog_command[0] * dog_command[0] +
+                                        dog_command[1] * dog_command[1] +
+                                        dog_command[2] * dog_command[2]);
+    const bool standing = command_norm < 0.1f;
+    float effective_gait_frequency = 0.0f;
+    if (std::find(observation_terms.begin(), observation_terms.end(), "roboduet/dog_commands") != observation_terms.end() ||
+        std::find(observation_terms.begin(), observation_terms.end(), "roboduet/clock_inputs") != observation_terms.end())
+    {
+        // Older bundles encode dynamic gait through the five extra commands.
+        const auto dynamic_gait_setting = params.Get<YAML::Node>("use_dynamic_gait");
+        const bool dynamic_gait = dynamic_gait_setting && !dynamic_gait_setting.IsNull()
+            ? params.Get<bool>("use_dynamic_gait")
+            : params.Get<std::vector<float>>("dog_commands_scale").size() > 6;
+        effective_gait_frequency = dynamic_gait && standing ? 0.0f : params.Get<float>("gait_frequency");
+    }
 
-    for (const std::string &observation : this->params.Get<std::vector<std::string>>("observations"))
+    for (const std::string &observation : observation_terms)
     {
         // ============= Base Observations =============
         if (observation == "lin_vel")
@@ -141,6 +162,21 @@ std::vector<float> RL::ComputeObservation()
         else if (observation == "commands")
         {
             obs_list.push_back(this->obs.commands * this->params.Get<std::vector<float>>("commands_scale"));
+        }
+        else if (observation == "robot_lab/velocity_pose_commands")
+        {
+            // IsaacLab UniformVelocityPoseCommand order:
+            // [vx, vy, yaw_rate, absolute_height, roll, pitch, relative_yaw].
+            // rl_sar exposes height as an operator offset around the training
+            // nominal, while this policy was trained with relative_yaw == 0.
+            obs_list.push_back(std::vector<float>{
+                this->control.x,
+                this->control.y,
+                this->control.yaw,
+                this->params.Get<float>("base_height_target") + this->control.body_height,
+                this->control.body_roll,
+                this->control.body_pitch,
+                0.0f});
         }
         else if (observation == "dof_pos")
         {
@@ -209,6 +245,14 @@ std::vector<float> RL::ComputeObservation()
                                            this->obs.dof_vel.begin() + num_leg_dofs + num_arm_dofs);
             obs_list.push_back(arm_dof_vel * this->params.Get<float>("dof_vel_scale"));
         }
+        else if (observation == "robot_lab/arm_dof_vel")
+        {
+            const int num_leg_dofs = this->params.Get<int>("num_leg_dofs");
+            const int num_arm_dofs = this->params.Get<int>("num_arm_dofs");
+            std::vector<float> arm_dof_vel(this->obs.dof_vel.begin() + num_leg_dofs,
+                                           this->obs.dof_vel.begin() + num_leg_dofs + num_arm_dofs);
+            obs_list.push_back(arm_dof_vel * this->params.Get<float>("arm_dof_vel_scale"));
+        }
         else if (observation == "roboduet/dog_commands")
         {
             // [x_vel, y_vel, yaw_vel, body_pitch, body_roll, body_height]
@@ -221,14 +265,16 @@ std::vector<float> RL::ComputeObservation()
             // operator's six. gait_frequency/gait_duration are read from the
             // same params the clock uses below, so this observation can never
             // drift out of sync with the actual gait clock.
-            std::vector<float> dog_commands = {
-                this->control.x, this->control.y, this->control.yaw,
-                this->control.body_pitch, this->control.body_roll, this->control.body_height};
+            std::vector<float> dog_commands(dog_command.begin(), dog_command.end());
             const auto& dog_commands_scale = this->params.Get<std::vector<float>>("dog_commands_scale");
+            if (this->params.Get<bool>("omit_height", false) && dog_commands.size() >= 6)
+            {
+                dog_commands.erase(dog_commands.begin() + 5);
+            }
             if (dog_commands_scale.size() > dog_commands.size())
             {
                 std::vector<float> gait_commands = {
-                    this->params.Get<float>("gait_frequency"),
+                    effective_gait_frequency,
                     this->params.Get<float>("footswing_height"),
                     this->params.Get<float>("stance_width"),
                     this->params.Get<float>("stance_length"),
@@ -246,15 +292,14 @@ std::vector<float> RL::ComputeObservation()
         }
         else if (observation == "roboduet/clock_inputs")
         {
-            // Mirrors LeggedRobot._step_contact_targets(). Stage 1 runs with
-            // use_dynamic_gait=False, so frequency/duration are fixed.
-            const float gait_frequency = this->params.Get<float>("gait_frequency");
+            // Dynamic-gait training sets the frequency command to zero for
+            // standing samples. Fixed-gait policies retain their fixed clock.
             const float gait_duration = this->params.Get<float>("gait_duration");
             const float policy_dt = this->params.Get<float>("dt") * this->params.Get<int>("decimation");
             const auto gait_phases = this->params.Get<std::map<std::string, float>>("gait_phases");
             const float phases = gait_phases.at("phases"), offsets = gait_phases.at("offsets"), bounds = gait_phases.at("bounds");
 
-            this->gait_indices = std::fmod(this->gait_indices + policy_dt * gait_frequency, 1.0f);
+            this->gait_indices = std::fmod(this->gait_indices + policy_dt * effective_gait_frequency, 1.0f);
 
             std::vector<float> foot_indices = {
                 this->gait_indices + phases + offsets + bounds,
@@ -262,12 +307,7 @@ std::vector<float> RL::ComputeObservation()
                 this->gait_indices + bounds,
                 this->gait_indices + phases};
 
-            // Training forces the stand phase when the velocity command is tiny.
-            const float command_norm = std::sqrt(this->control.x * this->control.x +
-                                                 this->control.y * this->control.y +
-                                                 this->control.yaw * this->control.yaw);
-            const bool standing = command_norm < 0.1f;
-
+            // Stand is the trained 0.25 foot phase, not an all-zero clock.
             std::vector<float> clock_inputs(4, 0.0f);
             for (int i = 0; i < 4; ++i)
             {
@@ -309,10 +349,19 @@ std::vector<float> RL::ComputeObservation()
                     std::vector<float> euler = QuaternionToEuler(this->obs.base_quat); // [roll, pitch, yaw]
                     pose_actual = {this->obs.base_height[0], euler[1], euler[0]};
                 }
-                obs_list.push_back(std::vector<float>{
-                    pose_actual[0] * this->params.Get<float>("body_height_cmd_scale"),
-                    pose_actual[1] * this->params.Get<float>("body_pitch_cmd_scale"),
-                    pose_actual[2] * this->params.Get<float>("body_roll_cmd_scale")});
+                if (this->params.Get<bool>("omit_height", false))
+                {
+                    obs_list.push_back(std::vector<float>{
+                        pose_actual[1] * this->params.Get<float>("body_pitch_cmd_scale"),
+                        pose_actual[2] * this->params.Get<float>("body_roll_cmd_scale")});
+                }
+                else
+                {
+                    obs_list.push_back(std::vector<float>{
+                        pose_actual[0] * this->params.Get<float>("body_height_cmd_scale"),
+                        pose_actual[1] * this->params.Get<float>("body_pitch_cmd_scale"),
+                        pose_actual[2] * this->params.Get<float>("body_roll_cmd_scale")});
+                }
             }
             else
             {
@@ -334,10 +383,19 @@ std::vector<float> RL::ComputeObservation()
                     pose_actual = {this->obs.base_height[0], euler[1], euler[0]};
                 }
                 const float height_target = this->params.Get<float>("base_height_target") + this->control.body_height;
-                obs_list.push_back(std::vector<float>{
-                    (height_target - pose_actual[0]) * this->params.Get<float>("body_height_cmd_scale"),
-                    (this->control.body_pitch - pose_actual[1]) * this->params.Get<float>("body_pitch_cmd_scale"),
-                    (this->control.body_roll - pose_actual[2]) * this->params.Get<float>("body_roll_cmd_scale")});
+                if (this->params.Get<bool>("omit_height", false))
+                {
+                    obs_list.push_back(std::vector<float>{
+                        (this->control.body_pitch - pose_actual[1]) * this->params.Get<float>("body_pitch_cmd_scale"),
+                        (this->control.body_roll - pose_actual[2]) * this->params.Get<float>("body_roll_cmd_scale")});
+                }
+                else
+                {
+                    obs_list.push_back(std::vector<float>{
+                        (height_target - pose_actual[0]) * this->params.Get<float>("body_height_cmd_scale"),
+                        (this->control.body_pitch - pose_actual[1]) * this->params.Get<float>("body_pitch_cmd_scale"),
+                        (this->control.body_roll - pose_actual[2]) * this->params.Get<float>("body_roll_cmd_scale")});
+                }
             }
             else
             {
@@ -491,6 +549,8 @@ void RL::InitRL(std::string robot_config_path)
 {
     std::lock_guard<std::mutex> lock(this->model_mutex);
 
+    // Missing metadata must fall back to this bundle's layout after a switch.
+    this->params.Set("use_dynamic_gait", YAML::Node());
     this->ReadYaml(robot_config_path, "config.yaml");
 
     // Newer exports pack the frozen gait command slots into a single list,

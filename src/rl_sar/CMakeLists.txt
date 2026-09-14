@@ -785,6 +785,19 @@ if(USE_MUJOCO)
     # Build executable
     add_executable(rl_sim_mujoco src/rl_sim_mujoco.cpp ${MUJOCO_SIMULATE_SRC} ${JOYSTICK_SRC})
 
+    # Deterministic, bounded physics evaluation through the same RL SDK.
+    # This executable has no viewer, joystick, ROS, or hardware output path.
+    add_executable(rl_mujoco_eval test/mujoco_closed_loop.cpp)
+    target_link_libraries(rl_mujoco_eval
+        rl_sdk observation_buffer ${YAML_CPP_LIBRARIES}
+        Threads::Threads mujoco_prebuilt
+    )
+
+    add_executable(rl_gait_observation_probe test/gait_observation_probe.cpp)
+    target_link_libraries(rl_gait_observation_probe
+        rl_sdk observation_buffer ${YAML_CPP_LIBRARIES} Threads::Threads
+    )
+
     # Suppress deprecation warnings for macOS 15.0 API changes in MuJoCo Simulate
     if(SYSTEM_TYPE STREQUAL "Darwin")
         set_source_files_properties(

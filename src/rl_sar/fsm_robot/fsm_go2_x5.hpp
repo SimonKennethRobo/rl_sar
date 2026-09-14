@@ -298,23 +298,29 @@ public:
         }
 
         const float dt = rl.params.Get<float>("dt") * rl.params.Get<int>("decimation");
-        const float max_accel = rl.params.Get<float>("arm_perturb_max_accel");
-        const float max_vel = rl.params.Get<float>("arm_perturb_max_vel");
-        const float resample_time = rl.params.Get<float>("arm_perturb_accel_resample_time");
-        const float zero_accel_prob = rl.params.Get<float>("arm_perturb_zero_accel_probability");
-        const float zero_vel_prob = rl.params.Get<float>("arm_perturb_zero_vel_probability");
-        const auto lower = rl.params.Get<std::vector<float>>("arm_perturb_pos_lower");
-        const auto upper = rl.params.Get<std::vector<float>>("arm_perturb_pos_upper");
+        // Older exports omit these MuJoCo-only settings. Match the defaults
+        // used by rc_s17 and the legacy Go2 X5 config; explicit YAML values win.
+        const float max_accel = rl.params.Get<float>("arm_perturb_max_accel", 3.0f);
+        const float max_vel = rl.params.Get<float>("arm_perturb_max_vel", 1.0f);
+        const float resample_time = rl.params.Get<float>("arm_perturb_accel_resample_time", 0.1f);
+        const float zero_accel_prob = rl.params.Get<float>("arm_perturb_zero_accel_probability", 0.3f);
+        const float zero_vel_prob = rl.params.Get<float>("arm_perturb_zero_vel_probability", 0.005f);
+        // Physical joint ranges, in x5_joint1..6 order (go2_x5.xml).
+        const std::vector<float> default_lower{-2.094f, 0.0f, 0.0f, -1.671f, -1.671f, -2.094f};
+        const std::vector<float> default_upper{3.14159f, 3.665f, 3.24f, 1.671f, 1.671f, 2.094f};
+        const auto lower = rl.params.Get<std::vector<float>>("arm_perturb_pos_lower", default_lower);
+        const auto upper = rl.params.Get<std::vector<float>>("arm_perturb_pos_upper", default_upper);
         const auto default_dof_pos = rl.params.Get<std::vector<float>>("default_dof_pos");
 
-        // The bounds are optional (MuJoCo-only, and only some exports write
-        // them). A config without them would otherwise index past the end of
-        // an empty vector below.
+        // Missing bounds use the defaults above; malformed explicit bounds
+        // must still be rejected before indexing them.
         if ((int)lower.size() != num_arm_dofs || (int)upper.size() != num_arm_dofs)
         {
             std::cout << std::endl << LOGGER::WARNING << "[go2_x5] " << rl.config_name
-                      << " declares no arm_perturb_pos_lower/upper; arm perturbation disabled" << std::endl;
+                      << " arm_perturb_pos_lower/upper must each contain " << num_arm_dofs
+                      << " entries; arm perturbation disabled" << std::endl;
             arm_perturb_enabled_ = false;
+            rl.ClearExternalArmTarget();
             return;
         }
 
@@ -426,6 +432,9 @@ public:
         rl.config_name = rl.params.Get<std::string>("config_name", "roboduet_stage1");
         try
         {
+            // Temporary, bundle-local workaround: a later corrected policy
+            // must not inherit the old model's reversed pitch convention.
+            rl.params.Set("ocs2_legacy_pitch", YAML::Node(false));
             rl.InitRL(rl.robot_name + "/" + rl.config_name);
             rl.now_state = *fsm_state;
         }
@@ -438,6 +447,13 @@ public:
         }
 
         num_arm_dofs_ = rl.params.Get<int>("num_arm_dofs", 0);
+        legacy_pitch_command_ = rl.params.Get<bool>("ocs2_legacy_pitch", false);
+        if (legacy_pitch_command_)
+        {
+            std::cout << LOGGER::NOTE
+                      << "[OCS2] Temporary legacy pitch inversion enabled for "
+                      << rl.config_name << std::endl;
+        }
         arm_begin_ = rl.params.Get<int>("num_of_dofs") - num_arm_dofs_;
         if (num_arm_dofs_ <= 0 || arm_begin_ < 0)
         {
@@ -593,7 +609,9 @@ private:
         rl.control.y = drive_planar ? cmd.base_lin_vel_body_xy[1] : 0.0f;
         rl.control.yaw = cmd.base_ang_vel_body_z;
         rl.control.body_height = cmd.body_height_cmd;
-        rl.control.body_pitch = cmd.body_pitch_cmd;
+        // MPC uses physical RPY; the selected legacy policy expects the
+        // opposite pitch command. Keep its trained observations untouched.
+        rl.control.body_pitch = legacy_pitch_command_ ? -cmd.body_pitch_cmd : cmd.body_pitch_cmd;
         rl.control.body_roll = cmd.body_roll_cmd;
 
         // KeyboardInterface() clamps at 20 Hz; this loop writes at the control
@@ -696,6 +714,7 @@ private:
     OCS2Bridge::LinkState last_link_ = OCS2Bridge::LinkState::WAITING;
 
     int num_arm_dofs_ = 0;
+    bool legacy_pitch_command_ = false;
     int arm_begin_ = 0;
     std::vector<float> arm_target_;
     std::vector<float> arm_target_dq_;

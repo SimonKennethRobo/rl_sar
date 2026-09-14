@@ -79,6 +79,10 @@ RL_Sim::RL_Sim(int argc, char **argv)
 
     this->mj_model = m;
     this->mj_data = d;
+
+    // Load startup settings before selecting the joystick device.
+    this->ReadYaml(this->robot_name, "base.yaml");
+
 #ifdef USE_JOYLINK
     {
         std::string joylink_config = (argc >= 4)
@@ -87,11 +91,8 @@ RL_Sim::RL_Sim(int argc, char **argv)
         this->SetupJoyLink(joylink_config);
     }
 #else
-    this->SetupSysJoystick("/dev/input/js0", 16); // 16 bits joystick
+    this->SetupSysJoystick(this->params.Get<std::string>("joystick_device", "/dev/input/js0"), 16);
 #endif
-
-    // read params from yaml
-    this->ReadYaml(this->robot_name, "base.yaml");
 
     // auto load FSM by robot_name
     if (FSMManager::GetInstance().IsTypeSupported(this->robot_name))
@@ -258,14 +259,23 @@ void RL_Sim::RobotControl()
 
 void RL_Sim::SetupSysJoystick(const std::string& device, int bits)
 {
+    this->sys_js.reset();
+    if (device.empty())
+    {
+        std::cout << LOGGER::INFO << "Joystick disabled by joystick_device; keyboard control available." << std::endl;
+        return;
+    }
+
     this->sys_js = std::make_unique<Joystick>(device);
     if (!this->sys_js->isFound())
     {
-        std::cout << LOGGER::ERROR << "Joystick [" << device << "] open failed." << std::endl;
-        // exit(1);
+        std::cout << LOGGER::WARNING << "Joystick [" << device << "] open failed; keyboard control available." << std::endl;
+        this->sys_js.reset();
+        return;
     }
 
     this->sys_js_max_value = (1 << (bits - 1));
+    std::cout << LOGGER::INFO << "Joystick listening on [" << device << "]" << std::endl;
 }
 
 void RL_Sim::GetSysJoystick()

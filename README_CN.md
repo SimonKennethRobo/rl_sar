@@ -250,6 +250,19 @@ ros2 run web_video_server web_video_server
 
 ### 使用手柄或键盘控制
 
+MuJoCo 直连手柄模式（`USE_JOYLINK=OFF`）在启动时读取
+`policy/<robot_name>/base.yaml` 中的 `joystick_device`。例如在 `go2_x5` 配置下：
+
+```yaml
+go2_x5:
+  joystick_device: "/dev/input/js1"
+```
+
+也可以填写 `/dev/input/by-id/` 下的手柄设备链接。省略该项时默认读取
+`/dev/input/js0`；设为 `""` 可禁用手柄输入，仅使用键盘，适用于 NoMachine
+虚拟鼠标占据 `js0` 的情况。设备无法打开时保留键盘控制，不会改读其他手柄。
+修改后重启程序即可，无需重新编译。JoyLink 模式的设备选择仍由 JoyLink 配置管理。
+
 |手柄控制|键盘控制|功能描述|
 |---|---|---|
 |**基础**|||

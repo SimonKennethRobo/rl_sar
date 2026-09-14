@@ -43,3 +43,5 @@ temp_extract*/
 # robot descriptions
 rl_sar_zoo
 tmp
+deploy
+policy/go2_x5

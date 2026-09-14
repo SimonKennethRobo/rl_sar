@@ -7,7 +7,10 @@ go2_x5:
   # config.yaml + policy.pt). Change this line to switch policies -- it is read
   # at state entry, so no rebuild is needed. Re-exporting keeps whatever is set
   # here; it only fills in a name when base.yaml has none.
-  config_name: "roboduet_stage1"
+  config_name: "robot_lab_mild_s2r_s42_8200"
+  # MuJoCo direct joystick input (USE_JOYLINK=OFF), read at program startup.
+  # Use another js path or /dev/input/by-id/...-joystick; "" disables it.
+  joystick_device: "/dev/input/js0"
   dt: 0.005
   decimation: 4
   num_of_dofs: 18
