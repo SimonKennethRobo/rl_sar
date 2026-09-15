@@ -132,7 +132,22 @@ std::vector<float> RL::ComputeObservation()
         const bool dynamic_gait = dynamic_gait_setting && !dynamic_gait_setting.IsNull()
             ? params.Get<bool>("use_dynamic_gait")
             : params.Get<std::vector<float>>("dog_commands_scale").size() > 6;
-        effective_gait_frequency = dynamic_gait && standing ? 0.0f : params.Get<float>("gait_frequency");
+        effective_gait_frequency = params.Get<bool>("servo_observation_timing", false)
+            ? params.Get<float>("gait_frequency")
+            : (dynamic_gait && standing ? 0.0f : params.Get<float>("gait_frequency"));
+    }
+    const std::array<float, 5> response_command = {
+        control.x, control.y, control.yaw, control.body_height, control.body_pitch};
+    if (response_enabled_ && !response_initializing_ && episode_length_buf != response_last_step_
+        && (!params.Get<bool>("servo_observation_timing", false) || servo_advancing_))
+    {
+        const auto euler = QuaternionToEuler(obs.base_quat);
+        const float height = obs.body_pose_actual.size() == 3 ? obs.body_pose_actual[0] : obs.base_height.at(0);
+        const float pitch = obs.body_pose_actual.size() == 3 ? obs.body_pose_actual[1] : euler[1];
+        response_observation_.Step(response_command, {
+            obs.lin_vel.at(0), obs.lin_vel.at(1), obs.ang_vel.at(2),
+            height - params.Get<float>("base_height_target"), pitch});
+        response_last_step_ = episode_length_buf;
     }
 
     for (const std::string &observation : observation_terms)
@@ -292,12 +307,38 @@ std::vector<float> RL::ComputeObservation()
         }
         else if (observation == "roboduet/clock_inputs")
         {
+            if (params.Get<bool>("servo_observation_timing", false) && !servo_advancing_)
+            {
+                obs_list.push_back(servo_clock_);
+                continue;
+            }
             // Dynamic-gait training sets the frequency command to zero for
             // standing samples. Fixed-gait policies retain their fixed clock.
             const float gait_duration = this->params.Get<float>("gait_duration");
             const float policy_dt = this->params.Get<float>("dt") * this->params.Get<int>("decimation");
-            const auto gait_phases = this->params.Get<std::map<std::string, float>>("gait_phases");
-            const float phases = gait_phases.at("phases"), offsets = gait_phases.at("offsets"), bounds = gait_phases.at("bounds");
+            // Older/frozen RoboDuet exports store this as
+            // [phases, offsets, bounds], while newer exports use named keys.
+            // Accept both so changing policy bundles does not fail in InitRL.
+            const auto gait_phases = this->params.Get<YAML::Node>("gait_phases");
+            float phases, offsets, bounds;
+            if (gait_phases.IsSequence())
+            {
+                const auto values = this->params.Get<std::vector<float>>("gait_phases");
+                if (values.size() != 3)
+                {
+                    throw std::runtime_error("gait_phases must contain [phases, offsets, bounds]");
+                }
+                phases = values[0];
+                offsets = values[1];
+                bounds = values[2];
+            }
+            else
+            {
+                const auto values = this->params.Get<std::map<std::string, float>>("gait_phases");
+                phases = values.at("phases");
+                offsets = values.at("offsets");
+                bounds = values.at("bounds");
+            }
 
             this->gait_indices = std::fmod(this->gait_indices + policy_dt * effective_gait_frequency, 1.0f);
 
@@ -318,6 +359,7 @@ std::vector<float> RL::ComputeObservation()
                           : 0.5f + (idx - gait_duration) * (0.5f / (1.0f - gait_duration));
                 clock_inputs[i] = std::sin(2.0f * 3.14159265f * idx);
             }
+            servo_clock_ = clock_inputs;
             obs_list.push_back(clock_inputs);
         }
         else if (observation == "roboduet/base_lin_vel")
@@ -418,6 +460,26 @@ std::vector<float> RL::ComputeObservation()
                 obs_list.push_back(std::vector<float>(3, 0.0f));
             }
         }
+        else if (observation == "roboduet/reference_state")
+        {
+            obs_list.push_back(response_observation_.State());
+        }
+        else if (observation == "roboduet/reference_rate")
+        {
+            obs_list.push_back(response_observation_.Rate());
+        }
+        else if (observation == "roboduet/reference_minus_cmd")
+        {
+            obs_list.push_back(response_observation_.Error(response_command));
+        }
+        else if (observation == "roboduet/ee_pos_in_base")
+        {
+            obs_list.push_back(response_observation_.EndEffector(obs.dof_pos));
+        }
+        else if (observation == "roboduet/response_deviation")
+        {
+            obs_list.push_back(response_observation_.Deviation());
+        }
         // ============= Other Observations =============
         else if (observation == "whole_body_tracking/motion_command")
         {
@@ -472,6 +534,10 @@ std::vector<float> RL::ComputeObservation()
             float phase = count / this->motion_length;
             std::vector<float> phase_vec = {phase};
             obs_list.push_back(phase_vec);
+        }
+        else
+        {
+            throw std::runtime_error("Unsupported observation term '" + observation + "' in policy config");
         }
     }
 
@@ -549,9 +615,32 @@ void RL::InitRL(std::string robot_config_path)
 {
     std::lock_guard<std::mutex> lock(this->model_mutex);
 
+    // A bundle missing these settings must not inherit them from the previous
+    // policy after a runtime switch.
+    this->params.Set("response_observation", YAML::Node());
     // Missing metadata must fall back to this bundle's layout after a switch.
     this->params.Set("use_dynamic_gait", YAML::Node());
+    this->params.Set("servo_observation_timing", YAML::Node(false));
+    this->params.Set("native_mrt", YAML::Node(false));
+    this->params.Set("policy_base_at_trunk", YAML::Node(false));
     this->ReadYaml(robot_config_path, "config.yaml");
+
+    const auto terms = params.Get<std::vector<std::string>>("observations");
+    const std::vector<std::string> response_terms = {
+        "roboduet/reference_state", "roboduet/reference_rate", "roboduet/reference_minus_cmd",
+        "roboduet/ee_pos_in_base", "roboduet/response_deviation"};
+    response_enabled_ = std::any_of(terms.begin(), terms.end(), [&](const std::string& term) {
+        return std::find(response_terms.begin(), response_terms.end(), term) != response_terms.end();
+    });
+    if (response_enabled_)
+    {
+        response_observation_.Configure(params.Get<YAML::Node>("response_observation"),
+            params.Get<float>("dt") * params.Get<int>("decimation"), params.Get<int>("num_of_dofs"));
+    }
+    response_last_step_ = ~0ULL;
+    servo_last_step_ = ~0ULL;
+    servo_clock_.assign(4, 0.0f);
+    gait_indices = 0.0f;
 
     // Newer exports pack the frozen gait command slots into a single list,
     // [gait_frequency, footswing_height, stance_width, stance_length,
@@ -576,9 +665,11 @@ void RL::InitRL(std::string robot_config_path)
     this->InitJointNum(this->params.Get<int>("num_of_dofs"));
 
     // init rl
-    this->InitObservations();
-    this->InitOutputs();
     this->InitControl();
+    response_initializing_ = true;
+    this->InitObservations();
+    response_initializing_ = false;
+    this->InitOutputs();
 
     // init obs history
     const auto& observations_history = this->params.Get<std::vector<int>>("observations_history");  // avoid dangling reference
@@ -909,6 +1000,44 @@ void RL::CSVLogger(const std::vector<float>& torque, const std::vector<float>& t
     file << std::endl;
 
     file.close();
+}
+
+// Advance the frozen RC_s17 gait/response state from the command that was
+// applied during the completed policy interval. Ordinary policies do not call
+// this path.
+void RL::AdvanceServoObservation(const std::vector<float>& applied_command)
+{
+    if (!params.Get<bool>("servo_observation_timing", false) || applied_command.size() != 11)
+        throw std::runtime_error("AdvanceServoObservation requires servo mode and 11 dog commands");
+    if (servo_last_step_ == episode_length_buf) return;
+    const auto saved_control = control;
+    const std::vector<std::string> keys = {
+        "gait_frequency", "footswing_height", "stance_width", "stance_length", "gait_duration"};
+    std::vector<float> saved;
+    for (const auto& key : keys) saved.push_back(params.Get<float>(key));
+    control.x = applied_command[0];
+    control.y = applied_command[1];
+    control.yaw = applied_command[2];
+    control.body_pitch = applied_command[3];
+    control.body_roll = applied_command[4];
+    control.body_height = applied_command[5];
+    for (size_t i=0; i<keys.size(); ++i) params.Set(keys[i], YAML::Node(applied_command[6+i]));
+    servo_advancing_ = true;
+    try
+    {
+        ComputeObservation();
+    }
+    catch (...)
+    {
+        servo_advancing_ = false;
+        control = saved_control;
+        for (size_t i=0; i<keys.size(); ++i) params.Set(keys[i], YAML::Node(saved[i]));
+        throw;
+    }
+    servo_advancing_ = false;
+    control = saved_control;
+    for (size_t i=0; i<keys.size(); ++i) params.Set(keys[i], YAML::Node(saved[i]));
+    servo_last_step_ = episode_length_buf;
 }
 
 bool RLFSMState::Interpolate(

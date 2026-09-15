@@ -548,6 +548,10 @@ void RL_Sim::GetJoyLinkInput()
 
 void RL_Sim::RunModel()
 {
+    // Keep the state snapshot, response update and inference coherent for the
+    // native RC_s17/MRT contract. Other policy paths retain their old timing.
+    std::unique_lock<std::recursive_mutex> native_lock(sim->mtx, std::defer_lock);
+    if (params.Get<bool>("native_mrt", false)) native_lock.lock();
     if (this->rl_init_done && simulation_running)
     {
         this->episode_length_buf += 1;
@@ -564,6 +568,25 @@ void RL_Sim::RunModel()
         this->obs.lin_vel = this->robot_state.base.lin_vel;
         this->obs.base_height = {this->robot_state.base.position[2]};
 
+        if (params.Get<bool>("policy_base_at_trunk", false))
+        {
+            // The v1 transport remains at the IMU origin. RC_s17 and F1 were
+            // trained/fitted at the trunk origin, so correct only this actor
+            // observation snapshot.
+            const float w=obs.base_quat[0], x=obs.base_quat[1], y=obs.base_quat[2], z=obs.base_quat[3];
+            const float rx=-.02557f, rz=.04232f;
+            obs.base_height[0] -= 2.f*(x*z-w*y)*rx + (1.f-2.f*(x*x+y*y))*rz;
+            const auto& omega=obs.ang_vel;
+            obs.lin_vel[0] -= omega[1]*rz;
+            obs.lin_vel[1] -= omega[2]*rx-omega[0]*rz;
+            obs.lin_vel[2] -= -omega[1]*rx;
+        }
+        if (params.Get<bool>("native_mrt", false) &&
+            params.Get<bool>("servo_observation_timing", false))
+        {
+            AdvanceServoObservation(completed_dog_command_);
+        }
+
         this->obs.actions = this->Forward();
         // Policies may drive fewer joints than the robot has (RoboDuet's dog
         // policy outputs 12 actions for an 18-DoF robot). Zero-pad so every
@@ -571,6 +594,15 @@ void RL_Sim::RunModel()
         // hold their default position via a zero entry in action_scale.
         this->obs.actions.resize(this->params.Get<int>("num_of_dofs"), 0.0f);
         this->ComputeOutput(this->obs.actions, this->output_dof_pos, this->output_dof_vel, this->output_dof_tau);
+
+        if (params.Get<bool>("native_mrt", false))
+        {
+            completed_dog_command_ = {
+                control.x, control.y, control.yaw,
+                control.body_pitch, control.body_roll, control.body_height};
+            const auto gait = params.Get<std::vector<float>>("dog_commands_extra");
+            completed_dog_command_.insert(completed_dog_command_.end(), gait.begin(), gait.end());
+        }
 
         if (!this->output_dof_pos.empty())
         {

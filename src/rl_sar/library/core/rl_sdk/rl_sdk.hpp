@@ -25,6 +25,7 @@
 #include "inference_runtime.hpp"
 #include "logger.hpp"
 #include "motion_loader.hpp"
+#include "response_observation.hpp"
 
 template <typename T>
 struct RobotCommand
@@ -244,6 +245,7 @@ public:
     // rl functions
     virtual std::vector<float> Forward() = 0;
     std::vector<float> ComputeObservation();
+    void AdvanceServoObservation(const std::vector<float>& applied_command);
     virtual void GetState(RobotState<float> *state) = 0;
     virtual void SetCommand(const RobotCommand<float> *command) = 0;
     void StateController(const RobotState<float> *state, RobotCommand<float> *command);
@@ -307,6 +309,14 @@ public:
     std::mutex model_mutex;
 
 private:
+    bool servo_advancing_ = false;
+    unsigned long long servo_last_step_ = ~0ULL;
+    std::vector<float> servo_clock_ = std::vector<float>(4, 0.0f);
+    ResponseObservation response_observation_;
+    bool response_enabled_ = false;
+    bool response_initializing_ = false;
+    unsigned long long response_last_step_ = 0;
+
     // Written by the bridge thread, read by the RL thread in ComputeOutput.
     mutable std::mutex external_arm_mutex_;
     std::vector<float> external_arm_q_;

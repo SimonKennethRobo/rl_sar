@@ -628,7 +628,9 @@ private:
         {
             const float delta = cmd.arm_q_cmd[i] - arm_target_[i];
             arm_target_[i] += std::min(std::max(delta, -max_step), max_step);
-            arm_target_dq_[i] = cmd.arm_dq_cmd[i];
+            arm_target_dq_[i] = rl.params.Get<bool>("native_mrt", false)
+                ? std::clamp(cmd.arm_dq_cmd[i], -kArmMaxJointSpeed, kArmMaxJointSpeed)
+                : cmd.arm_dq_cmd[i];
         }
     }
 

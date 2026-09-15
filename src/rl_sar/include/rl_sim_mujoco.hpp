@@ -71,6 +71,9 @@ private:
     void SetCommand(const RobotCommand<float> *command) override;
     void RunModel();
     void RobotControl();
+    // Command applied during the completed RC_s17 policy interval. Its
+    // response/gait observation is advanced before the next inference.
+    std::vector<float> completed_dog_command_ = std::vector<float>(11, 0.0f);
 
     // loop
     std::shared_ptr<LoopFunc> loop_keyboard;
