@@ -65,7 +65,8 @@ def main():
                        input="\n".join(" ".join(map(str, row)) for row in rows) + "\n",
                        text=True, check=True, stdout=subprocess.DEVNULL)
         actual = np.loadtxt(output)
-    assert actual.shape == (len(rows), 17)
+    expected_probe_width = len(bundle["dog_commands_scale"]) + 4
+    assert actual.shape == (len(rows), expected_probe_width + 2)
     worst_clock = worst_phase = worst_python = 0.0
     saved_phase = torch.zeros(1)
     for row, observed in zip(rows, actual):
@@ -83,7 +84,10 @@ def main():
                               halftime_clock_inputs=torch.zeros(1, 4), desired_contact_states=torch.zeros(1, 4))
         scope["_step_contact_targets"](env)
         saved_phase = env.gait_indices
-        expected = np.r_[command.numpy().ravel() * bundle["dog_commands_scale"], env.clock_inputs.numpy().ravel()]
+        command_obs = command.numpy().ravel()
+        if bundle.get("omit_height", False):
+            command_obs = np.delete(command_obs, 5)
+        expected = np.r_[command_obs * bundle["dog_commands_scale"], env.clock_inputs.numpy().ravel()]
         np.testing.assert_allclose(observed[2:], expected, atol=3e-5, rtol=1e-5)
         np.testing.assert_allclose(observed[0], saved_phase.item(), atol=3e-6)
         assert observed[1] == frequency, "standing must not overwrite the walking setting"

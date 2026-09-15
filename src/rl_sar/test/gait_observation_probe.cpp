@@ -18,7 +18,8 @@ int main(int argc, char** argv)
     rl.ReadYaml("go2_x5", "base.yaml");
     rl.InitRL(argv[1]);
     rl.params.Set("observations", YAML::Load("[roboduet/dog_commands, roboduet/clock_inputs]"));
-    rl.params.Set("num_observations", YAML::Node(15));
+    const int probe_width = static_cast<int>(rl.params.Get<std::vector<float>>("dog_commands_scale").size()) + 4;
+    rl.params.Set("num_observations", YAML::Node(probe_width));
     std::ofstream out(argv[2]);
     out << std::setprecision(9);
     int dynamic;
