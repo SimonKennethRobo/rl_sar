@@ -6,7 +6,9 @@
 #include "ocs2_bridge.hpp"
 
 #include <cstring>
+#include <cmath>
 #include <iostream>
+#include <optional>
 
 #include <zmq.hpp>
 
@@ -118,19 +120,31 @@ void OCS2Bridge::Stop()
     std::cout << LOGGER::INFO << "[OCS2Bridge] Stopped" << std::endl;
 }
 
-void OCS2Bridge::PublishState(StateMsg &msg)
+void OCS2Bridge::PublishState(StateMsg &msg, double gait_phase_rad)
 {
     if (!running_.load(std::memory_order_acquire) || !state_socket_)
     {
         return;
     }
 
-    FillHeader(msg.h, MSG_STATE, tx_seq_++, Now());
-
     try
     {
         // dontwait: a blocked publisher must never stall the control loop.
-        auto sent = state_socket_->send(zmq::const_buffer(&msg, sizeof(msg)), zmq::send_flags::dontwait);
+        std::optional<std::size_t> sent;
+        if (std::isfinite(gait_phase_rad))
+        {
+            PhaseStateMsg packet{};
+            packet.state = msg;
+            packet.gait_phase_rad = gait_phase_rad;
+            FillHeader(packet.state.h, MSG_STATE_PHASE, tx_seq_++, Now());
+            msg.h = packet.state.h;
+            sent = state_socket_->send(zmq::const_buffer(&packet, sizeof(packet)), zmq::send_flags::dontwait);
+        }
+        else
+        {
+            FillHeader(msg.h, MSG_STATE, tx_seq_++, Now());
+            sent = state_socket_->send(zmq::const_buffer(&msg, sizeof(msg)), zmq::send_flags::dontwait);
+        }
         if (sent.has_value())
         {
             std::lock_guard<std::mutex> lock(stats_mutex_);

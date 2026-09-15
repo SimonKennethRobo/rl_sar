@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <limits>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -88,7 +89,8 @@ public:
      * @brief Send one state sample. Header fields are filled in here.
      * @note Single-threaded: call only from the loop that owns the bridge.
      */
-    void PublishState(wbc_bridge::StateMsg &msg);
+    void PublishState(wbc_bridge::StateMsg &msg,
+                      double gait_phase_rad = std::numeric_limits<double>::quiet_NaN());
 
     /**
      * @brief Copy out the newest command received so far.

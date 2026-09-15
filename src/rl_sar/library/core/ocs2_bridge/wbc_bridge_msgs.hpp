@@ -41,6 +41,9 @@ enum MsgId : uint16_t
     MSG_CMD      = 2,
     MSG_CTRL_REQ = 3,
     MSG_CTRL_REP = 4,
+    // StateMsg followed by one float64 policy gait phase [rad]. IDs 5/6 are
+    // reserved by the experimental servo protocol in the bridge repository.
+    MSG_STATE_PHASE = 7,
 };
 
 // What the bridge is asking rl_sar to do with the base channels. The arm
@@ -122,6 +125,14 @@ struct StateMsg
     uint8_t reserved;
 };
 
+// Backward-compatible phase extension. Legacy StateMsg remains exactly 224
+// bytes; phase-aware consumers can require this message for residual models.
+struct PhaseStateMsg
+{
+    StateMsg state;
+    double gait_phase_rad;
+};
+
 /*
  * bridge -> rl_sar. Already converted into rl_sar's own conventions:
  * body-frame velocities, and a height RELATIVE to base_height_target, so the
@@ -176,6 +187,7 @@ struct CtrlRep
 
 static_assert(sizeof(MsgHeader) == 24, "MsgHeader layout changed");
 static_assert(sizeof(StateMsg) == 24 + 52 + 48 + 96 + 4, "StateMsg layout changed");
+static_assert(sizeof(PhaseStateMsg) == 232, "PhaseStateMsg layout changed");
 static_assert(sizeof(CmdMsg) == 24 + 24 + 48 + 4 + 12 + 4, "CmdMsg layout changed");
 static_assert(sizeof(CtrlReq) == 24 + 4 + 32, "CtrlReq layout changed");
 static_assert(sizeof(CtrlRep) == 24 + 4 + 64, "CtrlRep layout changed");

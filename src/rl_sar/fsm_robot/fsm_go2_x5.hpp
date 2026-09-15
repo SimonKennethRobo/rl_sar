@@ -691,7 +691,7 @@ private:
         msg.fsm_state_id = 1;
         msg.bridge_enabled = retracting_ ? 0 : 1;
         msg.policy_ok = rl.rl_init_done ? 1 : 0;
-        bridge_.PublishState(msg);
+        bridge_.PublishState(msg, static_cast<double>(rl.gait_indices) * 6.283185307179586);
     }
 
     void PrintStatus(OCS2Bridge::LinkState link, double age)
