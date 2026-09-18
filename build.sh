@@ -92,11 +92,18 @@ run_cmake_build() {
 }
 
 run_mujoco_build() {
+    local ocs2_bridge="$1"
+
     print_header "[Running MuJoCo Build]"
     print_info "Building with MuJoCo simulator support..."
+    if [ "$ocs2_bridge" = true ]; then
+        print_info "OCS2 MPC bridge: ON"
+    else
+        print_info "OCS2 MPC bridge: OFF"
+    fi
     print_separator
 
-    cmake src/rl_sar/ -B cmake_build -DUSE_CMAKE=ON -DUSE_MUJOCO=ON
+    cmake src/rl_sar/ -B cmake_build -DUSE_CMAKE=ON -DUSE_MUJOCO=ON -DUSE_OCS2_BRIDGE=$([ "$ocs2_bridge" = true ] && echo ON || echo OFF)
     cmake --build cmake_build -j$(nproc 2>/dev/null || echo 4)
 
     print_success "MuJoCo build completed!"
@@ -347,6 +354,7 @@ show_usage() {
     echo -e "  -c, --clean      Clean workspace (remove symlinks and build artifacts)"
     echo -e "  -m, --cmake      Build using CMake (for hardware deployment only)"
     echo -e "  -mj,--mujoco     Build with MuJoCo simulator support (CMake only)"
+    echo -e "  -ocs2,--ocs2-bridge  Enable the OCS2 MPC ZeroMQ bridge (use with -mj)"
     echo -e "  -h, --help       Show this help message"
     echo ""
     echo -e "${COLOR_INFO}Examples:${COLOR_RESET}"
@@ -356,6 +364,7 @@ show_usage() {
     echo -e "  $0 --clean package1   # Clean specific package and build artifacts"
     echo -e "  $0 -m                 # Build with CMake for hardware deployment"
     echo -e "  $0 -mj                # Build with CMake and MuJoCo simulator support"
+    echo -e "  $0 -mj -ocs2          # Build with MuJoCo and the OCS2 MPC bridge enabled"
 }
 
 main() {
@@ -363,6 +372,7 @@ main() {
     local clean_mode=false
     local cmake_mode=false
     local mujoco_mode=false
+    local ocs2_bridge=false
 
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
@@ -370,6 +380,7 @@ main() {
             -c|--clean) clean_mode=true; shift ;;
             -m|--cmake) cmake_mode=true; shift ;;
             -mj|--mujoco) cmake_mode=true; mujoco_mode=true; shift ;;
+            -ocs2|--ocs2-bridge) ocs2_bridge=true; shift ;;
             -h|--help) show_usage; exit 0 ;;
             --) shift; packages+=("$@"); break ;;
             -*) print_error "Unknown option: $1"; show_usage; exit 1 ;;
@@ -382,7 +393,7 @@ main() {
         setup_inference_runtime
         setup_robot_descriptions
         setup_mujoco
-        run_mujoco_build
+        run_mujoco_build "$ocs2_bridge"
         exit 0
     fi
 
