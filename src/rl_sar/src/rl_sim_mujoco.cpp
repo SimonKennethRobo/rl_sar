@@ -4,6 +4,8 @@
  */
 
 #include "rl_sim_mujoco.hpp"
+#include <cctype>
+#include <functional>
 
 RL_Sim* RL_Sim::instance = nullptr;
 
@@ -112,6 +114,9 @@ RL_Sim::RL_Sim(int argc, char **argv)
     this->InitJointNum(this->params.Get<int>("num_of_dofs"));
     this->InitOutputs();
     this->InitControl();
+#ifdef USE_MUJOCO_ROS2
+    StartRosInterface();
+#endif
 
     // loop
     this->loop_control = std::make_shared<LoopFunc>("loop_control", this->params.Get<float>("dt"), std::bind(&RL_Sim::RobotControl, this));
@@ -159,6 +164,12 @@ RL_Sim::~RL_Sim()
     this->loop_joystick->shutdown();
     this->loop_control->shutdown();
     this->loop_rl->shutdown();
+#ifdef USE_MUJOCO_ROS2
+    if (ros_node_) {
+        if (rclcpp::ok()) rclcpp::shutdown();
+        if (ros_thread_.joinable()) ros_thread_.join();
+    }
+#endif
 #ifdef PLOT
     this->loop_plot->shutdown();
 #endif
@@ -229,6 +240,44 @@ void RL_Sim::RobotControl()
 
     this->StateController(&this->robot_state, &this->robot_command);
 
+#ifdef USE_MUJOCO_ROS2
+    // Arm mode keys, same assignment as the real robot node: 2 OCS2, 3 HOME,
+    // 4 HOLD, 5 DAMPING, 6 WBC.
+    {
+        const auto key = this->control.current_keyboard;
+        std::string key_mode;
+        if (key == Input::Keyboard::Num2) key_mode = "OCS2";
+        else if (key == Input::Keyboard::Num3) key_mode = "HOME";
+        else if (key == Input::Keyboard::Num4) key_mode = "HOLD";
+        else if (key == Input::Keyboard::Num5) key_mode = "DAMPING";
+        else if (key == Input::Keyboard::Num6) key_mode = "WBC";
+        if (!key_mode.empty())
+        {
+            auto request = std::make_shared<std_msgs::msg::String>();
+            request->data = key_mode;
+            this->RosArmModeCallback(request);
+        }
+    }
+    // Mirror the real Go2 safety coupling: passive/damping legs imply a
+    // damping arm, even if the last operator mode was HOLD or OCS2.
+    const bool base_damping = this->fsm.current_state_ &&
+        this->fsm.current_state_->GetStateName() == "RLFSMStatePassive";
+    if (base_damping)
+    {
+        std::lock_guard<std::mutex> lock(ros_arm_mutex_);
+        if (ros_arm_mode_ != "DAMPING")
+        {
+            ros_arm_mode_ = "DAMPING";
+            if (ros_arm_mode_pub_)
+            {
+                std_msgs::msg::String mode;
+                mode.data = ros_arm_mode_;
+                ros_arm_mode_pub_->publish(mode);
+            }
+        }
+    }
+#endif
+
     if (this->control.current_keyboard == Input::Keyboard::R || this->control.current_gamepad == Input::Gamepad::RB_Y)
     {
         if (this->mj_model && this->mj_data)
@@ -252,10 +301,193 @@ void RL_Sim::RobotControl()
         simulation_running = !simulation_running;
     }
 
+#ifdef USE_MUJOCO_ROS2
+    {
+        std::lock_guard<std::mutex> lock(ros_arm_mutex_);
+        const int begin = this->params.Get<int>("num_leg_dofs", 12);
+        const int dofs = std::min(6, this->params.Get<int>("num_arm_dofs", 6));
+        if (ros_arm_mode_ == "DAMPING") {
+            ros_arm_hold_valid_ = false;
+            for (int i = 0; i < dofs; ++i) {
+                robot_command.motor_command.kp[begin + i] = 0.0f;
+                robot_command.motor_command.kd[begin + i] = 0.0f;
+                robot_command.motor_command.tau[begin + i] = 0.0f;
+            }
+        } else if (ros_arm_mode_ == "OCS2" || ros_arm_mode_ == "WBC" || ros_arm_mode_ == "HOLD" || ros_arm_mode_ == "HOME") {
+            const auto home = this->params.Get<std::vector<float>>("default_dof_pos");
+            // OCS2 with no fresh request yet (just switched in) holds the
+            // current pose instead of jumping to a stale/zero target.
+            const bool use_target = (ros_arm_mode_ == "OCS2" || ros_arm_mode_ == "WBC") && ros_arm_target_valid_;
+            // HOLD latches the pose on entry; re-reading the live pose every
+            // tick would give zero position error and let gravity sag the arm.
+            if (ros_arm_mode_ != "HOLD") ros_arm_hold_valid_ = false;
+            else if (!ros_arm_hold_valid_) {
+                for (int i = 0; i < dofs; ++i) ros_arm_hold_q_[i] = robot_state.motor_state.q[begin + i];
+                ros_arm_hold_valid_ = true;
+            }
+            for (int i = 0; i < dofs; ++i) {
+                const float q = ros_arm_mode_ == "HOME" ? home[begin + i] :
+                    ros_arm_mode_ == "HOLD" ? ros_arm_hold_q_[i] :
+                    (use_target ? ros_arm_target_q_[i] : robot_state.motor_state.q[begin + i]);
+                robot_command.motor_command.q[begin + i] = q;
+                robot_command.motor_command.dq[begin + i] = use_target ? ros_arm_target_dq_[i] : 0.0f;
+                robot_command.motor_command.kp[begin + i] = this->params.Get<std::vector<float>>("fixed_kp")[begin + i];
+                robot_command.motor_command.kd[begin + i] = this->params.Get<std::vector<float>>("fixed_kd")[begin + i];
+            }
+        }
+    }
+    ApplyRosBaseCommand();
+#endif
     this->control.ClearInput();
-
     this->SetCommand(&this->robot_command);
+#ifdef USE_MUJOCO_ROS2
+    PublishRosArmState();
+    PublishRosArmTarget();
+    PublishRosOdometry();
+#endif
 }
+
+#ifdef USE_MUJOCO_ROS2
+void RL_Sim::StartRosInterface()
+{
+    int argc = 0; char **argv = nullptr;
+    if (!rclcpp::ok()) rclcpp::init(argc, argv);
+    ros_node_ = std::make_shared<rclcpp::Node>("go2_x5_mujoco_ros");
+    ros_arm_state_pub_ = ros_node_->create_publisher<sensor_msgs::msg::JointState>("/go2_x5/arm/state", rclcpp::SensorDataQoS());
+    ros_arm_mode_pub_ = ros_node_->create_publisher<std_msgs::msg::String>("/go2_x5/arm/mode/state", rclcpp::QoS(1).transient_local());
+    ros_arm_command_sub_ = ros_node_->create_subscription<trajectory_msgs::msg::JointTrajectory>(
+        "/go2_x5/arm/command/request", 10, std::bind(&RL_Sim::RosArmCommandCallback, this, std::placeholders::_1));
+    ros_arm_mode_sub_ = ros_node_->create_subscription<std_msgs::msg::String>(
+        "/go2_x5/arm/mode/request", 10, std::bind(&RL_Sim::RosArmModeCallback, this, std::placeholders::_1));
+    ros_fsm_key_sub_ = ros_node_->create_subscription<std_msgs::msg::String>(
+        "/go2_x5/fsm/key", 10, [this](const std_msgs::msg::String::SharedPtr msg) { this->InjectKey(msg->data); });
+    ros_base_command_sub_ = ros_node_->create_subscription<std_msgs::msg::Float32MultiArray>(
+        "/go2_x5/base/command", 10, std::bind(&RL_Sim::RosBaseCommandCallback, this, std::placeholders::_1));
+    ros_arm_target_pub_ = ros_node_->create_publisher<trajectory_msgs::msg::JointTrajectory>("/go2_x5/arm/command/target", rclcpp::QoS(10));
+    ros_odom_pub_ = ros_node_->create_publisher<nav_msgs::msg::Odometry>("/go2_x5/slam/odometry", rclcpp::SensorDataQoS());
+    std_msgs::msg::String mode; mode.data = ros_arm_mode_; ros_arm_mode_pub_->publish(mode);
+    ros_thread_ = std::thread([this]() { rclcpp::spin(ros_node_); });
+}
+
+void RL_Sim::RosArmCommandCallback(const trajectory_msgs::msg::JointTrajectory::SharedPtr msg)
+{
+    if (msg->points.empty() || msg->points.back().positions.size() < 6) return;
+    std::lock_guard<std::mutex> lock(ros_arm_mutex_);
+    for (int i = 0; i < 6; ++i) {
+        ros_arm_target_q_[i] = static_cast<float>(msg->points.back().positions[i]);
+        ros_arm_target_dq_[i] = i < static_cast<int>(msg->points.back().velocities.size()) ? static_cast<float>(msg->points.back().velocities[i]) : 0.0f;
+    }
+    ros_arm_target_valid_ = true;
+}
+
+void RL_Sim::RosArmModeCallback(const std_msgs::msg::String::SharedPtr msg)
+{
+    std::string mode = msg->data;
+    std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    if (mode != "HOME" && mode != "HOLD" && mode != "DAMPING" && mode != "OCS2" && mode != "WBC") return;
+    {
+        std::lock_guard<std::mutex> lock(ros_arm_mutex_);
+        const bool was_mpc = ros_arm_mode_ == "OCS2" || ros_arm_mode_ == "WBC";
+        if ((mode == "OCS2" || mode == "WBC") && !was_mpc) ros_arm_target_valid_ = false;
+        ros_arm_mode_ = mode;
+    }
+    if (ros_arm_mode_pub_) { std_msgs::msg::String state; state.data = mode; ros_arm_mode_pub_->publish(state); }
+}
+
+void RL_Sim::PublishRosArmState()
+{
+    if (!ros_arm_state_pub_) return;
+    const int begin = this->params.Get<int>("num_leg_dofs", 12);
+    const int dofs = std::min(6, this->params.Get<int>("num_arm_dofs", 6));
+    sensor_msgs::msg::JointState msg; msg.header.stamp = ros_node_->now();
+    for (int i = 0; i < dofs; ++i) { msg.name.push_back("x5_joint" + std::to_string(i + 1)); msg.position.push_back(robot_state.motor_state.q[begin + i]); msg.velocity.push_back(robot_state.motor_state.dq[begin + i]); }
+    ros_arm_state_pub_->publish(msg);
+}
+
+void RL_Sim::RosBaseCommandCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg)
+{
+    if (msg->data.size() != 6) return;
+    std::lock_guard<std::mutex> lock(ros_arm_mutex_);
+    std::copy(msg->data.begin(), msg->data.end(), ros_base_command_.begin());
+    ros_base_command_time_ = std::chrono::steady_clock::now();
+    ros_base_command_seen_ = true;
+}
+
+// WBC mode only: the MPC base channels replace the operator's velocity/pose
+// commands, and only while the legs are in the locomotion state. Any other
+// mode/state releases them, so leaving WBC always stops the base.
+void RL_Sim::ApplyRosBaseCommand()
+{
+    const bool locomotion = this->fsm.current_state_ &&
+        this->fsm.current_state_->GetStateName() == "RLFSMStateRLLocomotion";
+    std::array<float, 6> cmd{};
+    bool wbc = false, fresh = false;
+    {
+        std::lock_guard<std::mutex> lock(ros_arm_mutex_);
+        wbc = ros_arm_mode_ == "WBC" && ros_arm_target_valid_;
+        cmd = ros_base_command_;
+        fresh = ros_base_command_seen_ &&
+            std::chrono::steady_clock::now() - ros_base_command_time_ < std::chrono::milliseconds(200);
+    }
+    if (wbc && locomotion)
+    {
+        if (fresh) this->ApplyExternalBaseCommand(cmd);
+        else this->CoastExternalBaseCommand();
+        ros_base_driven_ = true;
+    }
+    else if (ros_base_driven_)
+    {
+        this->ReleaseExternalBaseCommand();
+        ros_base_driven_ = false;
+    }
+}
+
+// Same message the real-robot RL node sends to the ARX5 driver, so the arm
+// target path can be observed identically in simulation.
+void RL_Sim::PublishRosArmTarget()
+{
+    if (!ros_arm_target_pub_) return;
+    { std::lock_guard<std::mutex> lock(ros_arm_mutex_); if (ros_arm_mode_ == "DAMPING") return; }
+    const int begin = this->params.Get<int>("num_leg_dofs", 12);
+    trajectory_msgs::msg::JointTrajectory msg;
+    msg.header.stamp = ros_node_->now();
+    trajectory_msgs::msg::JointTrajectoryPoint point;
+    for (int i = 0; i < 6; ++i) {
+        msg.joint_names.push_back("x5_joint" + std::to_string(i + 1));
+        point.positions.push_back(robot_command.motor_command.q[begin + i]);
+        point.velocities.push_back(robot_command.motor_command.dq[begin + i]);
+    }
+    point.time_from_start = rclcpp::Duration::from_seconds(std::max(0.01, static_cast<double>(this->params.Get<float>("dt"))));
+    msg.points.push_back(point);
+    ros_arm_target_pub_->publish(msg);
+}
+
+// Canonical /go2_x5/slam/odometry from the MJCF base ground truth (framepos,
+// framelinvel, framequat, gyro), standing in for FAST-LIO on hardware.
+// Convention matches go2_x5_ocs2_node: world-frame pose, body-frame twist.
+void RL_Sim::PublishRosOdometry()
+{
+    if (!ros_odom_pub_ || !this->params.Get<bool>("use_base_state_sensor", false)) return;
+    nav_msgs::msg::Odometry msg;
+    msg.header.stamp = ros_node_->now();
+    msg.header.frame_id = "odom";
+    msg.child_frame_id = "base_link";
+    msg.pose.pose.position.x = robot_state.base.position[0];
+    msg.pose.pose.position.y = robot_state.base.position[1];
+    msg.pose.pose.position.z = robot_state.base.position[2];
+    msg.pose.pose.orientation.w = robot_state.imu.quaternion[0];
+    msg.pose.pose.orientation.x = robot_state.imu.quaternion[1];
+    msg.pose.pose.orientation.y = robot_state.imu.quaternion[2];
+    msg.pose.pose.orientation.z = robot_state.imu.quaternion[3];
+    msg.twist.twist.linear.x = robot_state.base.lin_vel[0];
+    msg.twist.twist.linear.y = robot_state.base.lin_vel[1];
+    msg.twist.twist.linear.z = robot_state.base.lin_vel[2];
+    msg.twist.twist.angular.x = robot_state.imu.gyroscope[0];
+    msg.twist.twist.angular.y = robot_state.imu.gyroscope[1];
+    msg.twist.twist.angular.z = robot_state.imu.gyroscope[2];
+    ros_odom_pub_->publish(msg);
+}
+#endif
 
 void RL_Sim::SetupSysJoystick(const std::string& device, int bits)
 {

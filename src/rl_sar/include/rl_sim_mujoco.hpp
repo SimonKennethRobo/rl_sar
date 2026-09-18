@@ -25,10 +25,23 @@
 #include <fstream>
 #include <stdexcept>
 #include <memory>
+#include <array>
+#include <chrono>
+#include <mutex>
+#include <thread>
 
 #include <mujoco/mujoco.h>
 #include "joystick.hh"
 #include "mujoco_utils.hpp"
+
+#ifdef USE_MUJOCO_ROS2
+#include <rclcpp/rclcpp.hpp>
+#include <nav_msgs/msg/odometry.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
+#include <std_msgs/msg/float32_multi_array.hpp>
+#include <std_msgs/msg/string.hpp>
+#include <trajectory_msgs/msg/joint_trajectory.hpp>
+#endif
 
 #ifdef USE_JOYLINK
 #include "joylink_client/joylink_client.h"
@@ -132,6 +145,38 @@ private:
     std::map<std::string, float> joint_velocities;
     std::map<std::string, float> joint_efforts;
     void StartJointController(const std::string& ros_namespace, const std::vector<std::string>& names);
+#ifdef USE_MUJOCO_ROS2
+    void StartRosInterface();
+    void PublishRosArmState();
+    void PublishRosArmTarget();
+    void PublishRosOdometry();
+    void RosArmCommandCallback(const trajectory_msgs::msg::JointTrajectory::SharedPtr msg);
+    void RosArmModeCallback(const std_msgs::msg::String::SharedPtr msg);
+    void RosBaseCommandCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg);
+    void ApplyRosBaseCommand();
+    std::shared_ptr<rclcpp::Node> ros_node_;
+    std::thread ros_thread_;
+    rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr ros_arm_state_pub_;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr ros_arm_mode_pub_;
+    rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr ros_arm_target_pub_;
+    rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr ros_odom_pub_;
+    rclcpp::Subscription<trajectory_msgs::msg::JointTrajectory>::SharedPtr ros_arm_command_sub_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr ros_arm_mode_sub_;
+    rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr ros_base_command_sub_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr ros_fsm_key_sub_;
+    std::mutex ros_arm_mutex_;
+    std::vector<float> ros_arm_target_q_ = std::vector<float>(6, 0.0f);
+    std::vector<float> ros_arm_target_dq_ = std::vector<float>(6, 0.0f);
+    bool ros_arm_target_valid_ = false;
+    bool ros_arm_hold_valid_ = false;
+    // [vx, vy, wz, height, pitch, roll] from /go2_x5/base/command (WBC mode)
+    std::array<float, 6> ros_base_command_{};
+    std::chrono::steady_clock::time_point ros_base_command_time_;
+    bool ros_base_command_seen_ = false;
+    bool ros_base_driven_ = false;
+    std::vector<float> ros_arm_hold_q_ = std::vector<float>(6, 0.0f);
+    std::string ros_arm_mode_ = "HOLD";
+#endif
 };
 
 #endif // RL_SIM_HPP

@@ -363,12 +363,11 @@ ros2 run rl_sar rl_real_go2_ros2 x5
 不加载 Unitree SDK 的 ChannelFactory。机器人与其他 ROS 2 节点可以统一使用 domain 0。
 原 `rl_real_go2 <NETWORK_INTERFACE> [wheel]` 保留为纯 Unitree SDK 后端，不订阅 ROS 话题。
 
-实机状态估计默认订阅 `/odometry/filtered`（`nav_msgs/Odometry`，可通过
-`policy/go2_x5/base.yaml` 中的 `odometry_topic` 修改）。
+实机状态估计默认订阅 `/go2_x5/slam/odometry`（`nav_msgs/Odometry`）；`go2_odometry` 同时保留 `/odometry/filtered` 兼容输出。
 `twist.twist.linear` 必须是机体系 `[vx, vy, vz]`，
 `pose.pose.position.z` 作为世界系基座高度，`pose.pose.orientation` 提供
-pitch 和 roll。重力方向及角速度继续使用 Go2 IMU。预留的六维 X5
-关节位置和速度 observation 固定补零，程序不会向 X5 发送电机命令。
+pitch 和 roll。重力方向及角速度继续使用 Go2 IMU。六维 X5
+关节位置和速度来自 `/go2_x5/arm/state`；机械臂目标由 `rl_sar` 仲裁后发送到 `/go2_x5/arm/command/target`。
 odometry 超过默认 `0.2 s` 未更新时，程序暂停生成新的策略动作。
 
 G1(29dofs):

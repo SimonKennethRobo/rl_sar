@@ -17,12 +17,17 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
+#include <std_msgs/msg/float32_multi_array.hpp>
+#include <std_msgs/msg/string.hpp>
+#include <trajectory_msgs/msg/joint_trajectory.hpp>
 #include <unitree_api/msg/request.hpp>
 #include <unitree_api/msg/response.hpp>
 #include <unitree_go/msg/low_cmd.hpp>
 #include <unitree_go/msg/low_state.hpp>
 #include <unitree_go/msg/wireless_controller.hpp>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -77,12 +82,21 @@ private:
     void JoystickCallback(const unitree_go::msg::WirelessController::SharedPtr msg);
     void CmdvelCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
     void OdometryCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
+    void ArmStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg);
+    void ArmCommandCallback(const trajectory_msgs::msg::JointTrajectory::SharedPtr msg);
+    void ArmModeCallback(const std_msgs::msg::String::SharedPtr msg);
     void MotionResponseCallback(const unitree_api::msg::Response::SharedPtr msg);
 
     bool WaitForLowState(std::chrono::seconds timeout);
     bool DeactivateMotionService();
     int32_t CallMotionApi(int64_t api_id, std::string *response_data = nullptr);
     bool CopyExternalObservations(RobotState<float> *state = nullptr);
+    void UpdateArmModeFromInput();
+    void ApplyArmMode(const RobotState<float> &state, RobotCommand<float> *command);
+    void BaseCommandCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg);
+    void ApplyBaseCommand();
+    void PublishArmCommand(const RobotCommand<float> &command);
+    void PublishArmMode(const std::string &mode);
     void WarnExternalObservations(const std::string &reason);
     static void SetLowCmdCrc(unitree_go::msg::LowCmd &msg);
 
@@ -94,10 +108,18 @@ private:
     std::shared_ptr<LoopFunc> loop_rl_;
 
     rclcpp::Publisher<unitree_go::msg::LowCmd>::SharedPtr lowcmd_publisher_;
+    rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr arm_command_publisher_;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr arm_mode_target_publisher_;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr arm_mode_state_publisher_;
     rclcpp::Subscription<unitree_go::msg::LowState>::SharedPtr lowstate_subscriber_;
     rclcpp::Subscription<unitree_go::msg::WirelessController>::SharedPtr joystick_subscriber_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_subscriber_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_subscriber_;
+    rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr arm_state_subscriber_;
+    rclcpp::Subscription<trajectory_msgs::msg::JointTrajectory>::SharedPtr arm_command_subscriber_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr arm_mode_subscriber_;
+    rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr base_command_subscriber_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr fsm_key_subscriber_;
     rclcpp::Publisher<unitree_api::msg::Request>::SharedPtr motion_request_publisher_;
     rclcpp::Subscription<unitree_api::msg::Response>::SharedPtr motion_response_subscriber_;
 
@@ -116,6 +138,19 @@ private:
 
     mutable std::mutex external_obs_mutex_;
     ExternalObservationState external_obs_;
+    std::vector<float> arm_q_ = std::vector<float>(6, 0.0f);
+    std::vector<float> arm_dq_ = std::vector<float>(6, 0.0f);
+    std::vector<float> arm_hold_q_ = std::vector<float>(6, 0.0f);
+    bool have_arm_state_ = false;
+    std::vector<float> arm_command_q_ = std::vector<float>(6, 0.0f);
+    std::vector<float> arm_command_dq_ = std::vector<float>(6, 0.0f);
+    std::string arm_mode_ = "HOLD";
+    // WBC mode: [vx, vy, wz, height, pitch, roll] from /go2_x5/base/command
+    std::array<float, 6> base_command_{};
+    std::chrono::steady_clock::time_point base_command_time_{};
+    bool base_command_seen_ = false;
+    bool base_driven_ = false;
+    std::string last_published_arm_mode_;
     SteadyTime last_external_obs_warning_{};
 };
 

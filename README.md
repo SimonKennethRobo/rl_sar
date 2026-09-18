@@ -376,14 +376,12 @@ built-in motion service has already been stopped, startup continues with a
 warning; verify that the built-in controller is actually disabled before
 enabling the policy.
 
-The real-robot state estimate is read from `/odometry/filtered`
-(`nav_msgs/Odometry`; configurable with `odometry_topic` in
-`policy/go2_x5/base.yaml`). `twist.twist.linear` must contain body-frame
+The real-robot state estimate is read from `/go2_x5/slam/odometry` (`nav_msgs/Odometry`; `go2_odometry` retains `/odometry/filtered` as a compatibility output). `twist.twist.linear` must contain body-frame
 `[vx, vy, vz]`, `pose.pose.position.z` is used as the world-frame base height,
 and `pose.pose.orientation` provides pitch and roll. Gravity and angular
-velocity continue to come from the Go2 IMU. The six reserved X5 joint position
-and velocity observation slots are zero-filled, and no X5 motor commands are
-sent. Policy inference is paused when odometry exceeds the default `0.2 s`
+velocity continue to come from the Go2 IMU. The six X5 joint positions and
+velocities come from `/go2_x5/arm/state`; `rl_sar` arbitrates arm targets and
+publishes them on `/go2_x5/arm/command/target`. Policy inference is paused when odometry exceeds the default `0.2 s`
 timeout.
 
 G1(29dofs):

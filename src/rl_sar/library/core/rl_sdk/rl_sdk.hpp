@@ -16,6 +16,7 @@
 #include <memory>
 #include <fstream>
 #include <mutex>
+#include <array>
 #include <atomic>
 
 #include <yaml-cpp/yaml.h>
@@ -262,6 +263,10 @@ public:
     // control
     Control control;
     void KeyboardInterface();
+    // Same key events as the terminal, from any source (e.g. the /go2_x5/fsm/key topic).
+    // key: one character, or UP/DOWN/LEFT/RIGHT/ESC/ENTER/SPACE.
+    void InjectKey(const std::string &key);
+    bool PressKeyChar(int c);
 
     // history buffer
     ObservationBuffer history_obs_buf;
@@ -293,6 +298,15 @@ public:
     // Indices are policy order, i.e. the last num_arm_dofs entries.
     void SetExternalArmTarget(const std::vector<float> &q, const std::vector<float> &dq);
     void ClearExternalArmTarget();
+
+    // Whole-body (WBC) mode: the MPC drives the locomotion command channels.
+    // cmd = [vx, vy, wz, body_height, body_pitch, body_roll]. Values are clamped
+    // to the active policy's limit_* ranges before being written to `control`.
+    void ApplyExternalBaseCommand(const std::array<float, 6> &cmd);
+    // Link went stale: bleed the velocity channels to zero, keep the pose channels.
+    void CoastExternalBaseCommand();
+    // Leaving WBC (or not in locomotion): zero every base channel.
+    void ReleaseExternalBaseCommand();
 
     // protect func
     void TorqueProtect(const std::vector<float> &origin_output_dof_tau);

@@ -18,7 +18,7 @@ endif()
 if(NOT USE_CMAKE)
     if($ENV{ROS_DISTRO} MATCHES "noetic")
         add_compile_definitions(USE_ROS1)
-    elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble")
+    elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
         add_compile_definitions(USE_ROS2)
     endif()
 else()
@@ -28,6 +28,7 @@ endif()
 
 # MuJoCo simulator option
 set(USE_MUJOCO OFF CACHE BOOL "Build with MuJoCo simulator support")
+set(USE_MUJOCO_ROS2 OFF CACHE BOOL "Expose rl_sim_mujoco through the canonical Go2-X5 ROS topics")
 
 # ZeroMQ link to the OCS2 MPC bridge (go2_x5_ocs2_bridge). Off by default so the
 # stock build needs no libzmq; the OCS2 FSM state is compiled out with it.
@@ -98,7 +99,7 @@ if(NOT USE_CMAKE)
             robot_joint_controller
             rospy
         )
-    elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble")
+    elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
         find_package(ament_cmake REQUIRED)
         find_package(joint_state_broadcaster REQUIRED)
         find_package(robot_state_publisher REQUIRED)
@@ -112,6 +113,8 @@ if(NOT USE_CMAKE)
         find_package(std_srvs REQUIRED)
         find_package(geometry_msgs REQUIRED)
         find_package(nav_msgs REQUIRED)
+        find_package(sensor_msgs REQUIRED)
+        find_package(trajectory_msgs REQUIRED)
         find_package(unitree_api REQUIRED)
         find_package(unitree_go REQUIRED)
         ament_package()
@@ -311,7 +314,7 @@ set_target_properties(unitree_legged_sdk PROPERTIES
     IMPORTED_LOCATION "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_legged_sdk/lib/${UNITREE_LIB}.so"
 )
 set(UNITREE_A1_LIBS Threads::Threads unitree_legged_sdk lcm)
-if($ENV{ROS_DISTRO} MATCHES "foxy|humble")
+if($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
     file(GLOB GLOB_UNITREE_LEGGED_SDK "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_legged_sdk/lib/${UNITREE_LIB}.so")
     install(FILES
         ${GLOB_UNITREE_LEGGED_SDK}
@@ -359,7 +362,7 @@ set_target_properties(lite3_motionsdk PROPERTIES
     IMPORTED_LOCATION "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/deeprobotics/Lite3_MotionSDK/lib/libdeeprobotics_legged_sdk_${ARCH_DIR}.so"
 )
 set(LITE3_REAL_LIBS Threads::Threads lite3_motionsdk)
-if($ENV{ROS_DISTRO} MATCHES "foxy|humble")
+if($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
     file(GLOB GLOB_LITE3_SDK_SO "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/deeprobotics/Lite3_MotionSDK/lib/libdeeprobotics_legged_sdk_${ARCH_DIR}.so")
     install(FILES
         ${GLOB_LITE3_SDK_SO}
@@ -376,7 +379,7 @@ if(SYSTEM_TYPE STREQUAL "Linux")
         IMPORTED_LOCATION "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/agibot/agibot_D1_Edu-Ultra/lib/zsl-1/${ARCH_DIR}/libmc_sdk_zsl_1_${ARCH_DIR}.so"
     )
     set(AGIBOT_D1_LIBS Threads::Threads agibot_d1_sdk)
-    if($ENV{ROS_DISTRO} MATCHES "foxy|humble")
+    if($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
         file(GLOB GLOB_AGIBOT_D1_SDK_SO "${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/agibot/agibot_D1_Edu-Ultra/lib/zsl-1/${ARCH_DIR}/libmc_sdk_zsl_1_${ARCH_DIR}.so")
         install(FILES
             ${GLOB_AGIBOT_D1_SDK_SO}
@@ -432,7 +435,7 @@ if(USE_OCS2_BRIDGE)
     target_compile_definitions(ocs2_bridge PUBLIC USE_OCS2_BRIDGE)
 
     if(NOT USE_CMAKE)
-        if($ENV{ROS_DISTRO} MATCHES "foxy|humble")
+        if($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
             install(TARGETS ocs2_bridge DESTINATION lib/${PROJECT_NAME})
         endif()
     endif()
@@ -453,7 +456,7 @@ if(USE_ONNX)
     target_compile_definitions(inference_runtime PRIVATE USE_ONNX)
 endif()
 if(NOT USE_CMAKE)
-    if($ENV{ROS_DISTRO} MATCHES "foxy|humble")
+    if($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
         install(TARGETS inference_runtime DESTINATION lib/${PROJECT_NAME})
     endif()
 endif()
@@ -477,7 +480,7 @@ else()
     target_compile_definitions(rl_sdk PUBLIC WITHOUT_NUMPY)
 endif()
 if(NOT USE_CMAKE)
-    if($ENV{ROS_DISTRO} MATCHES "foxy|humble")
+    if($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
         install(TARGETS rl_sdk DESTINATION lib/${PROJECT_NAME})
     endif()
 endif()
@@ -485,7 +488,7 @@ endif()
 # library for observation buffer
 add_library(observation_buffer library/core/observation_buffer/observation_buffer.cpp)
 if(NOT USE_CMAKE)
-    if($ENV{ROS_DISTRO} MATCHES "foxy|humble")
+    if($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
         install(TARGETS observation_buffer DESTINATION lib/${PROJECT_NAME})
     endif()
 endif()
@@ -501,7 +504,7 @@ if(NOT USE_CMAKE)
     )
     if($ENV{ROS_DISTRO} MATCHES "noetic")
         target_link_libraries(rl_sim ${catkin_LIBRARIES})
-    elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble")
+    elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
         ament_target_dependencies(rl_sim
             joint_state_broadcaster
             robot_state_publisher
@@ -531,7 +534,7 @@ if(SYSTEM_TYPE STREQUAL "Linux")
     if(NOT USE_CMAKE)
         if($ENV{ROS_DISTRO} MATCHES "noetic")
             target_link_libraries(rl_real_a1 ${catkin_LIBRARIES})
-        elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble")
+        elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
             ament_target_dependencies(rl_real_a1
                 rclcpp
                 geometry_msgs
@@ -558,7 +561,7 @@ if(SYSTEM_TYPE STREQUAL "Linux")
     if(NOT USE_CMAKE)
         if($ENV{ROS_DISTRO} MATCHES "noetic")
             target_link_libraries(rl_real_lite3 ${catkin_LIBRARIES})
-        elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble")
+        elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
             ament_target_dependencies(rl_real_lite3
                 rclcpp
                 geometry_msgs
@@ -581,7 +584,7 @@ if(SYSTEM_TYPE STREQUAL "Linux")
     set_target_properties(rl_real_go2 PROPERTIES
         INSTALL_RPATH "${CMAKE_INSTALL_RPATH};${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_sdk2/thirdparty/lib/${ARCH_DIR}"
     )
-    if(NOT USE_CMAKE AND "$ENV{ROS_DISTRO}" MATCHES "foxy|humble")
+    if(NOT USE_CMAKE AND "$ENV{ROS_DISTRO}" MATCHES "foxy|humble|jazzy|kilted")
         install(TARGETS rl_real_go2 DESTINATION lib/${PROJECT_NAME})
     endif()
 endif()
@@ -589,7 +592,7 @@ endif()
 # Pure ROS 2 transport for Go2/Go2W/Go2-X5. This target deliberately does not
 # link unitree_sdk2 or its bundled CycloneDDS; Unitree topics are accessed via
 # the unitree_go and unitree_api ROS interfaces in domain 0.
-if(SYSTEM_TYPE STREQUAL "Linux" AND NOT USE_CMAKE AND "$ENV{ROS_DISTRO}" MATCHES "foxy|humble")
+if(SYSTEM_TYPE STREQUAL "Linux" AND NOT USE_CMAKE AND "$ENV{ROS_DISTRO}" MATCHES "foxy|humble|jazzy|kilted")
     add_executable(rl_real_go2_ros2 src/rl_real_go2_ros2.cpp)
     target_link_libraries(rl_real_go2_ros2
         rl_sdk
@@ -600,6 +603,9 @@ if(SYSTEM_TYPE STREQUAL "Linux" AND NOT USE_CMAKE AND "$ENV{ROS_DISTRO}" MATCHES
         rclcpp
         geometry_msgs
         nav_msgs
+        sensor_msgs
+        std_msgs
+        trajectory_msgs
         unitree_api
         unitree_go
     )
@@ -626,7 +632,7 @@ if(SYSTEM_TYPE STREQUAL "Linux")
     if(NOT USE_CMAKE)
         if($ENV{ROS_DISTRO} MATCHES "noetic")
             target_link_libraries(rl_real_g1 ${catkin_LIBRARIES})
-        elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble")
+        elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
             ament_target_dependencies(rl_real_g1
                 rclcpp
                 geometry_msgs
@@ -648,7 +654,7 @@ if(SYSTEM_TYPE STREQUAL "Linux")
     if(NOT USE_CMAKE)
         if($ENV{ROS_DISTRO} MATCHES "noetic")
             target_link_libraries(rl_real_l4w4 ${catkin_LIBRARIES})
-        elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble")
+        elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
             ament_target_dependencies(rl_real_l4w4
                 rclcpp
                 geometry_msgs
@@ -674,7 +680,7 @@ if(SYSTEM_TYPE STREQUAL "Linux" AND BUILD_AGIBOT_D1)
     if(NOT USE_CMAKE)
         if($ENV{ROS_DISTRO} MATCHES "noetic")
             target_link_libraries(rl_real_d1 ${catkin_LIBRARIES})
-        elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble")
+        elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
             ament_target_dependencies(rl_real_d1
                 rclcpp
                 geometry_msgs
@@ -691,7 +697,7 @@ if(NOT USE_CMAKE)
             scripts/actuator_net.py
             DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
         )
-    elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble")
+    elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
         install(PROGRAMS
             scripts/actuator_net.py
             DESTINATION lib/${PROJECT_NAME}
@@ -700,7 +706,7 @@ if(NOT USE_CMAKE)
 endif()
 
 if(NOT USE_CMAKE)
-    if($ENV{ROS_DISTRO} MATCHES "foxy|humble")
+    if($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
         install(
             DIRECTORY launch worlds ${PROJECT_ROOT_DIR}/policy
             DESTINATION share/${PROJECT_NAME}/${dir}
@@ -784,6 +790,18 @@ if(USE_MUJOCO)
 
     # Build executable
     add_executable(rl_sim_mujoco src/rl_sim_mujoco.cpp ${MUJOCO_SIMULATE_SRC} ${JOYSTICK_SRC})
+    if(USE_MUJOCO_ROS2)
+        # Works with USE_CMAKE=ON (no gazebo/robot_msgs/unitree deps): only the
+        # four message packages and rclcpp are needed for the canonical topics.
+        find_package(ament_cmake REQUIRED)
+        find_package(rclcpp REQUIRED)
+        find_package(nav_msgs REQUIRED)
+        find_package(sensor_msgs REQUIRED)
+        find_package(std_msgs REQUIRED)
+        find_package(trajectory_msgs REQUIRED)
+        target_compile_definitions(rl_sim_mujoco PRIVATE USE_MUJOCO_ROS2)
+        ament_target_dependencies(rl_sim_mujoco rclcpp nav_msgs sensor_msgs std_msgs trajectory_msgs)
+    endif()
 
     # Deterministic, bounded physics evaluation through the same RL SDK.
     # This executable has no viewer, joystick, ROS, or hardware output path.

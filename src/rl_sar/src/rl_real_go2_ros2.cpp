@@ -11,6 +11,7 @@
 #include <array>
 #include <csignal>
 #include <cmath>
+#include <cctype>
 #include <cstring>
 #include <iostream>
 #include <thread>
@@ -167,8 +168,30 @@ RLRealGo2Ros2::RLRealGo2Ros2(int argc, char **argv)
     if (x5_mode_)
     {
         odometry_subscriber_ = create_subscription<nav_msgs::msg::Odometry>(
-            params.Get<std::string>("odometry_topic"), rclcpp::SensorDataQoS(),
+            "/go2_x5/slam/odometry", rclcpp::SensorDataQoS(),
             [this](const nav_msgs::msg::Odometry::SharedPtr msg) { OdometryCallback(msg); });
+        arm_state_subscriber_ = create_subscription<sensor_msgs::msg::JointState>(
+            "/go2_x5/arm/state", rclcpp::SensorDataQoS(),
+            [this](const sensor_msgs::msg::JointState::SharedPtr msg) { ArmStateCallback(msg); });
+        arm_command_subscriber_ = create_subscription<trajectory_msgs::msg::JointTrajectory>(
+            "/go2_x5/arm/command/request", rclcpp::QoS(10),
+            [this](const trajectory_msgs::msg::JointTrajectory::SharedPtr msg) { ArmCommandCallback(msg); });
+        arm_mode_subscriber_ = create_subscription<std_msgs::msg::String>(
+            "/go2_x5/arm/mode/request", rclcpp::QoS(10),
+            [this](const std_msgs::msg::String::SharedPtr msg) { ArmModeCallback(msg); });
+        fsm_key_subscriber_ = create_subscription<std_msgs::msg::String>(
+            "/go2_x5/fsm/key", rclcpp::QoS(10),
+            [this](const std_msgs::msg::String::SharedPtr msg) { InjectKey(msg->data); });
+        base_command_subscriber_ = create_subscription<std_msgs::msg::Float32MultiArray>(
+            "/go2_x5/base/command", rclcpp::QoS(10),
+            [this](const std_msgs::msg::Float32MultiArray::SharedPtr msg) { BaseCommandCallback(msg); });
+        arm_command_publisher_ = create_publisher<trajectory_msgs::msg::JointTrajectory>(
+            "/go2_x5/arm/command/target", rclcpp::QoS(10));
+        arm_mode_target_publisher_ = create_publisher<std_msgs::msg::String>(
+            "/go2_x5/arm/mode/target", rclcpp::QoS(10));
+        arm_mode_state_publisher_ = create_publisher<std_msgs::msg::String>(
+            "/go2_x5/arm/mode/state", rclcpp::QoS(1).transient_local());
+        PublishArmMode(arm_mode_);
     }
 
     motion_request_publisher_ = create_publisher<unitree_api::msg::Request>(
@@ -331,7 +354,40 @@ void RLRealGo2Ros2::SetCommand(const RobotCommand<float> *command)
 void RLRealGo2Ros2::RobotControl()
 {
     GetState(&robot_state);
+    if (x5_mode_) UpdateArmModeFromInput();
     StateController(&robot_state, &robot_command);
+    if (x5_mode_)
+    {
+        // The leg FSM's passive state is Go2 damping. It is a safety boundary:
+        // force the arm through the same canonical mode path so the ARX SDK
+        // cannot keep tracking an OCS2/HOLD target while the base is limp.
+        const bool base_damping = fsm.current_state_ &&
+            fsm.current_state_->GetStateName() == "RLFSMStatePassive";
+        if (base_damping)
+        {
+            bool arm_already_damping = false;
+            {
+                std::lock_guard<std::mutex> lock(external_obs_mutex_);
+                arm_already_damping = arm_mode_ == "DAMPING";
+            }
+            if (!arm_already_damping)
+            {
+                std_msgs::msg::String damping;
+                damping.data = "DAMPING";
+                ArmModeCallback(std::make_shared<std_msgs::msg::String>(damping));
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lock(external_obs_mutex_);
+            if (!have_arm_state_) {
+                control.ClearInput();
+                return;
+            }
+        }
+        ApplyArmMode(robot_state, &robot_command);
+        PublishArmCommand(robot_command);
+        ApplyBaseCommand();
+    }
     control.ClearInput();
     SetCommand(&robot_command);
 }
@@ -456,6 +512,234 @@ void RLRealGo2Ros2::OdometryCallback(const nav_msgs::msg::Odometry::SharedPtr ms
     external_obs_.odometry_stamp = std::chrono::steady_clock::now();
 }
 
+void RLRealGo2Ros2::ArmStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg)
+{
+    std::lock_guard<std::mutex> lock(external_obs_mutex_);
+    if (msg->position.size() < 6) return;
+    for (int i = 0; i < 6; ++i)
+    {
+        const std::string expected = "x5_joint" + std::to_string(i + 1);
+        auto it = std::find(msg->name.begin(), msg->name.end(), expected);
+        const size_t index = msg->name.empty() ? static_cast<size_t>(i) :
+            (it == msg->name.end() ? static_cast<size_t>(i) : static_cast<size_t>(it - msg->name.begin()));
+        if (index >= msg->position.size()) return;
+        arm_q_[i] = static_cast<float>(msg->position[index]);
+        arm_dq_[i] = index < msg->velocity.size() ? static_cast<float>(msg->velocity[index]) : 0.0F;
+    }
+    have_arm_state_ = true;
+    if (arm_mode_ == "HOLD" && arm_hold_q_.size() == arm_q_.size() && last_published_arm_mode_.empty())
+    {
+        arm_hold_q_ = arm_q_;
+    }
+}
+
+void RLRealGo2Ros2::ArmCommandCallback(const trajectory_msgs::msg::JointTrajectory::SharedPtr msg)
+{
+    if (msg->points.empty() || msg->points.back().positions.size() != 6) return;
+    if (!msg->joint_names.empty() && msg->joint_names.size() == 6) {
+        for (int i = 0; i < 6; ++i) {
+            if (msg->joint_names[i] != "x5_joint" + std::to_string(i + 1)) {
+                RCLCPP_WARN(get_logger(), "Ignoring arm request with joint order mismatch at %d", i);
+                return;
+            }
+        }
+    }
+    std::vector<float> q(6), dq(6, 0.0F);
+    const auto &point = msg->points.back();
+    for (int i = 0; i < 6; ++i)
+    {
+        q[i] = static_cast<float>(point.positions[i]);
+        if (i < static_cast<int>(point.velocities.size())) dq[i] = static_cast<float>(point.velocities[i]);
+    }
+    std::string mode;
+    {
+        std::lock_guard<std::mutex> lock(external_obs_mutex_);
+        mode = arm_mode_;
+        // Buffer the newest request even if the mode callback is delivered a
+        // few DDS scheduling cycles later; the mode transition will consume it.
+        arm_command_q_ = q;
+        arm_command_dq_ = dq;
+    }
+    if (mode == "OCS2" || mode == "WBC") SetExternalArmTarget(q, dq);
+}
+
+void RLRealGo2Ros2::ArmModeCallback(const std_msgs::msg::String::SharedPtr msg)
+{
+    std::string mode = msg->data;
+    std::transform(mode.begin(), mode.end(), mode.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    if (mode != "HOME" && mode != "HOLD" && mode != "DAMPING" && mode != "OCS2" && mode != "WBC")
+    {
+        RCLCPP_WARN(get_logger(), "Ignoring unknown arm mode '%s'", msg->data.c_str());
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(external_obs_mutex_);
+        if (mode == "HOLD" && have_arm_state_) arm_hold_q_ = arm_q_;
+        if ((mode == "OCS2" || mode == "WBC") && have_arm_state_ && arm_command_q_.size() == arm_q_.size()) {
+            arm_command_q_ = arm_q_;
+            arm_command_dq_.assign(arm_q_.size(), 0.0F);
+        }
+        arm_mode_ = mode;
+    }
+    if (mode == "DAMPING") ClearExternalArmTarget();
+    PublishArmMode(mode);
+}
+
+void RLRealGo2Ros2::BaseCommandCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg)
+{
+    if (msg->data.size() != 6) return;
+    std::lock_guard<std::mutex> lock(external_obs_mutex_);
+    std::copy(msg->data.begin(), msg->data.end(), base_command_.begin());
+    base_command_time_ = std::chrono::steady_clock::now();
+    base_command_seen_ = true;
+}
+
+// WBC mode only: MPC base channels replace the operator's velocity/pose
+// commands while the legs are in locomotion. Any other mode/state (including
+// a stale link) stops or releases them, so leaving WBC always stops the base.
+void RLRealGo2Ros2::ApplyBaseCommand()
+{
+    const bool locomotion = fsm.current_state_ &&
+        fsm.current_state_->GetStateName() == "RLFSMStateRLLocomotion";
+    std::array<float, 6> cmd{};
+    bool wbc = false, fresh = false;
+    {
+        std::lock_guard<std::mutex> lock(external_obs_mutex_);
+        wbc = arm_mode_ == "WBC";
+        cmd = base_command_;
+        fresh = base_command_seen_ &&
+            std::chrono::steady_clock::now() - base_command_time_ < std::chrono::milliseconds(200);
+    }
+    if (wbc && locomotion)
+    {
+        if (fresh) ApplyExternalBaseCommand(cmd);
+        else CoastExternalBaseCommand();
+        base_driven_ = true;
+    }
+    else if (base_driven_)
+    {
+        ReleaseExternalBaseCommand();
+        base_driven_ = false;
+    }
+}
+
+void RLRealGo2Ros2::UpdateArmModeFromInput()
+{
+    std::string mode;
+    if (control.current_keyboard == Input::Keyboard::Num3 || control.current_gamepad == Input::Gamepad::RB_DPadLeft)
+        mode = "HOME";
+    else if (control.current_keyboard == Input::Keyboard::Num4 || control.current_gamepad == Input::Gamepad::RB_DPadRight)
+        mode = "HOLD";
+    else if (control.current_keyboard == Input::Keyboard::Num5 || control.current_gamepad == Input::Gamepad::LB_DPadDown)
+        mode = "DAMPING";
+    else if (control.current_keyboard == Input::Keyboard::Num2 || control.current_gamepad == Input::Gamepad::RB_DPadDown)
+        mode = "OCS2";
+    else if (control.current_keyboard == Input::Keyboard::Num6 || control.current_gamepad == Input::Gamepad::LB_DPadUp)
+        mode = "WBC";
+    else if (control.current_keyboard == Input::Keyboard::P || control.current_gamepad == Input::Gamepad::LB_X)
+        mode = "DAMPING";
+    if (!mode.empty())
+    {
+        std_msgs::msg::String msg;
+        msg.data = mode;
+        ArmModeCallback(std::make_shared<std_msgs::msg::String>(msg));
+    }
+}
+
+void RLRealGo2Ros2::ApplyArmMode(const RobotState<float> &state, RobotCommand<float> *command)
+{
+    std::string mode;
+    std::vector<float> hold;
+    {
+        std::lock_guard<std::mutex> lock(external_obs_mutex_);
+        mode = arm_mode_;
+        hold = arm_hold_q_;
+    }
+    const int begin = params.Get<int>("num_leg_dofs");
+    const int dofs = params.Get<int>("num_arm_dofs", 6);
+    const auto home = params.Get<std::vector<float>>("default_dof_pos");
+    const auto kp = params.Get<std::vector<float>>("fixed_kp");
+    const auto kd = params.Get<std::vector<float>>("fixed_kd");
+    if (begin + dofs > static_cast<int>(command->motor_command.q.size())) return;
+    std::vector<float> target(dofs, 0.0F), velocity(dofs, 0.0F);
+    if (mode == "HOME")
+    {
+        for (int i = 0; i < dofs; ++i) target[i] = home[begin + i];
+        SetExternalArmTarget(target, velocity);
+    }
+    else if (mode == "HOLD")
+    {
+        if (hold.size() != static_cast<size_t>(dofs)) hold.assign(state.motor_state.q.begin() + begin, state.motor_state.q.begin() + begin + dofs);
+        target = hold;
+        SetExternalArmTarget(target, velocity);
+    }
+    else if (mode == "DAMPING")
+    {
+        for (int i = 0; i < dofs; ++i)
+        {
+            command->motor_command.q[begin + i] = state.motor_state.q[begin + i];
+            command->motor_command.dq[begin + i] = 0.0F;
+            command->motor_command.kp[begin + i] = 0.0F;
+            command->motor_command.kd[begin + i] = 0.0F;
+            command->motor_command.tau[begin + i] = 0.0F;
+        }
+        ClearExternalArmTarget();
+        return;
+    }
+    else if (mode == "OCS2" || mode == "WBC")
+    {
+        std::lock_guard<std::mutex> lock(external_obs_mutex_);
+        target = arm_command_q_;
+        velocity = arm_command_dq_;
+    }
+    for (int i = 0; i < dofs; ++i)
+    {
+        command->motor_command.q[begin + i] = target[i];
+        command->motor_command.dq[begin + i] = velocity[i];
+        command->motor_command.kp[begin + i] = kp[begin + i];
+        command->motor_command.kd[begin + i] = kd[begin + i];
+        command->motor_command.tau[begin + i] = 0.0F;
+    }
+}
+
+void RLRealGo2Ros2::PublishArmCommand(const RobotCommand<float> &command)
+{
+    std::string current_mode;
+    { std::lock_guard<std::mutex> lock(external_obs_mutex_); current_mode = arm_mode_; }
+    if (!arm_command_publisher_ || current_mode == "DAMPING") return;
+    trajectory_msgs::msg::JointTrajectory msg;
+    msg.header.stamp = now();
+    msg.joint_names.resize(6);
+    trajectory_msgs::msg::JointTrajectoryPoint point;
+    point.positions.resize(6); point.velocities.resize(6);
+    const int begin = params.Get<int>("num_leg_dofs");
+    for (int i = 0; i < 6; ++i)
+    {
+        msg.joint_names[i] = "x5_joint" + std::to_string(i + 1);
+        point.positions[i] = command.motor_command.q[begin + i];
+        point.velocities[i] = command.motor_command.dq[begin + i];
+    }
+    point.time_from_start = rclcpp::Duration::from_seconds(std::max(0.01, static_cast<double>(params.Get<float>("dt"))));
+    msg.points.push_back(point);
+    arm_command_publisher_->publish(msg);
+}
+
+void RLRealGo2Ros2::PublishArmMode(const std::string &mode)
+{
+    if (!arm_mode_state_publisher_) return;
+    std_msgs::msg::String msg; msg.data = mode;
+    arm_mode_state_publisher_->publish(msg);
+    if (arm_mode_target_publisher_)
+    {
+        // The ARX driver has no WBC concept: for it, WBC is just OCS2 tracking.
+        std_msgs::msg::String driver_msg = msg;
+        if (driver_msg.data == "WBC") driver_msg.data = "OCS2";
+        arm_mode_target_publisher_->publish(driver_msg);
+    }
+    last_published_arm_mode_ = mode;
+}
+
 void RLRealGo2Ros2::MotionResponseCallback(const unitree_api::msg::Response::SharedPtr msg)
 {
     {
@@ -548,9 +832,18 @@ bool RLRealGo2Ros2::CopyExternalObservations(RobotState<float> *state)
     {
         const int begin = params.Get<int>("num_leg_dofs");
         const int end = begin + params.Get<int>("num_arm_dofs");
-        std::fill(state->motor_state.q.begin() + begin, state->motor_state.q.begin() + end, 0.0F);
-        std::fill(state->motor_state.dq.begin() + begin, state->motor_state.dq.begin() + end, 0.0F);
-        std::fill(state->motor_state.tau_est.begin() + begin, state->motor_state.tau_est.begin() + end, 0.0F);
+        if (!have_arm_state_ || static_cast<int>(arm_q_.size()) != end - begin)
+        {
+            std::fill(state->motor_state.q.begin() + begin, state->motor_state.q.begin() + end, 0.0F);
+            std::fill(state->motor_state.dq.begin() + begin, state->motor_state.dq.begin() + end, 0.0F);
+            std::fill(state->motor_state.tau_est.begin() + begin, state->motor_state.tau_est.begin() + end, 0.0F);
+        }
+        else
+        {
+            std::copy(arm_q_.begin(), arm_q_.end(), state->motor_state.q.begin() + begin);
+            std::copy(arm_dq_.begin(), arm_dq_.end(), state->motor_state.dq.begin() + begin);
+            std::fill(state->motor_state.tau_est.begin() + begin, state->motor_state.tau_est.begin() + end, 0.0F);
+        }
         return true;
     }
     if (!external_obs_.have_odometry)

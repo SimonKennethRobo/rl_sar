@@ -54,11 +54,12 @@ public:
             }
             else
             {
-                // The arm must never go limp -- it would fall onto the base and
-                // can be back-driven into its own hard stops. Hold position.
-                fsm_command->motor_command.q[i] = rl.params.Get<std::vector<float>>("default_dof_pos")[i];
-                fsm_command->motor_command.kp[i] = rl.params.Get<std::vector<float>>("fixed_kp")[i];
-                fsm_command->motor_command.kd[i] = rl.params.Get<std::vector<float>>("fixed_kd")[i];
+                // Go2 passive/damping is the common safety state. The arm must
+                // enter damping with the legs; use its measured position only
+                // as the instantaneous command to avoid a position jump.
+                fsm_command->motor_command.q[i] = fsm_state->motor_state.q[i];
+                fsm_command->motor_command.kp[i] = 0;
+                fsm_command->motor_command.kd[i] = 0;
             }
         }
     }
@@ -135,12 +136,11 @@ public:
             {
                 return "RLFSMStateRLLocomotion";
             }
-#ifdef USE_OCS2_BRIDGE
             else if (rl.control.current_keyboard == Input::Keyboard::Num2 || rl.control.current_gamepad == Input::Gamepad::RB_DPadDown)
             {
-                return "RLFSMStateOCS2Manip";
+                // OCS2 is an arm mode now; the leg FSM remains locomotion.
+                return "RLFSMStateRLLocomotion";
             }
-#endif
             else if (rl.control.current_keyboard == Input::Keyboard::Num9 || rl.control.current_gamepad == Input::Gamepad::B)
             {
                 return "RLFSMStateGetDown";
@@ -383,12 +383,6 @@ public:
         {
             return "RLFSMStateGetUp";
         }
-#ifdef USE_OCS2_BRIDGE
-        else if (rl.control.current_keyboard == Input::Keyboard::Num2 || rl.control.current_gamepad == Input::Gamepad::RB_DPadDown)
-        {
-            return "RLFSMStateOCS2Manip";
-        }
-#endif
         return state_name_;
     }
 };
