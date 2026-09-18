@@ -347,6 +347,13 @@ void RL_Sim::GetSysJoystick()
     if (this->sys_js_button[5].pressed && this->sys_js_axis[6] < 0) this->control.SetGamepad(Input::Gamepad::RB_DPadLeft);
     if (this->sys_js_button[4].pressed && this->sys_js_button[5].on_press) this->control.SetGamepad(Input::Gamepad::LB_RB);
 
+    auto clamp_to_param = [this](float value, const std::string &key) -> float
+    {
+        if (!this->params.Has(key)) return value;
+        auto limit = this->params.Get<std::vector<float>>(key);
+        return std::clamp(value, limit[0], limit[1]);
+    };
+
     float ly = -float(this->sys_js_axis[1]) / float(this->sys_js_max_value);
     float lx = -float(this->sys_js_axis[0]) / float(this->sys_js_max_value);
     float rx = -float(this->sys_js_axis[3]) / float(this->sys_js_max_value);
@@ -355,9 +362,9 @@ void RL_Sim::GetSysJoystick()
 
     if (has_input)
     {
-        this->control.x = ly;
-        this->control.y = lx;
-        this->control.yaw = rx;
+        this->control.x = clamp_to_param(ly, "limit_vel_x");
+        this->control.y = clamp_to_param(lx, "limit_vel_y");
+        this->control.yaw = clamp_to_param(rx, "limit_vel_yaw");
         this->sys_js_active = true;
     }
     else if (this->sys_js_active)
@@ -384,8 +391,8 @@ void RL_Sim::GetSysJoystick()
 
     if (has_pose_input)
     {
-        this->control.body_pitch = ry;
-        this->control.body_roll = 0.4f * (rt - lt);
+        this->control.body_pitch = clamp_to_param(ry, "limit_body_pitch");
+        this->control.body_roll = clamp_to_param(0.4f * (rt - lt), "limit_body_roll");
         this->sys_js_pose_active = true;
     }
     else if (this->sys_js_pose_active)
@@ -395,8 +402,8 @@ void RL_Sim::GetSysJoystick()
         this->sys_js_pose_active = false;
     }
 
-    if (this->sys_js_axis[7] < 0) this->control.body_height += 0.004f;
-    if (this->sys_js_axis[7] > 0) this->control.body_height -= 0.004f;
+    if (this->sys_js_axis[7] < 0) this->control.body_height = clamp_to_param(this->control.body_height + 0.004f, "limit_body_height");
+    if (this->sys_js_axis[7] > 0) this->control.body_height = clamp_to_param(this->control.body_height - 0.004f, "limit_body_height");
 }
 
 #ifdef USE_JOYLINK
