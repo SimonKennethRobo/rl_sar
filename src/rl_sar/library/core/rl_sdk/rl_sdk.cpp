@@ -178,20 +178,23 @@ std::vector<float> RL::ComputeObservation()
         {
             obs_list.push_back(this->obs.commands * this->params.Get<std::vector<float>>("commands_scale"));
         }
-        else if (observation == "robot_lab/velocity_pose_commands")
+        else if (observation == "robot_lab/velocity_pose_commands" ||
+                 observation == "robot_lab/velocity_pose_commands_6d")
         {
             // IsaacLab UniformVelocityPoseCommand order:
             // [vx, vy, yaw_rate, absolute_height, roll, pitch, relative_yaw].
             // rl_sar exposes height as an operator offset around the training
             // nominal, while this policy was trained with relative_yaw == 0.
-            obs_list.push_back(std::vector<float>{
+            std::vector<float> command{
                 this->control.x,
                 this->control.y,
                 this->control.yaw,
                 this->params.Get<float>("base_height_target") + this->control.body_height,
                 this->control.body_roll,
-                this->control.body_pitch,
-                0.0f});
+                this->control.body_pitch};
+            // v4_63 drops the unused pose-yaw channel. Legacy bundles retain it.
+            if (observation == "robot_lab/velocity_pose_commands") command.push_back(0.0f);
+            obs_list.push_back(command);
         }
         else if (observation == "dof_pos")
         {
