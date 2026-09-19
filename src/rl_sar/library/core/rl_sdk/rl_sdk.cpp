@@ -737,6 +737,11 @@ void RL::ClearExternalArmTarget()
     this->use_external_arm_.store(false, std::memory_order_release);
 }
 
+bool RL::HasExternalArmTarget() const
+{
+    return this->use_external_arm_.load(std::memory_order_acquire);
+}
+
 void RL::ApplyExternalBaseCommand(const std::array<float, 6> &cmd)
 {
     auto limited = [this](float value, const std::string &key) -> float
