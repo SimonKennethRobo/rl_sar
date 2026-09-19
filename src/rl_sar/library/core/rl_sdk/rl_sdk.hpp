@@ -241,6 +241,9 @@ public:
     void InitOutputs();
     void InitControl();
     void InitRL(std::string robot_config_path);
+    // Runtime bundle entry point used by headless evaluators. The legacy
+    // InitRL() remains unchanged and still resolves POLICY_DIR bundles.
+    void InitRLFromBundle(const std::string& config_path, const std::string& model_path);
     void InitJointNum(size_t num_joints);
 
     // rl functions

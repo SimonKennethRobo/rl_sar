@@ -71,46 +71,36 @@ if(UPPER_BUILD_TYPE STREQUAL "DEBUG")
     add_compile_options(-g)
 endif()
 
-# Get project root directory
-get_filename_component(PROJECT_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+# Resolve the source checkout explicitly.  colcon discovers this package
+# through a symlink in ros2_ws/src, so CMAKE_CURRENT_SOURCE_DIR alone points at
+# the workspace volume instead of the repository's policy directory.
+set(RL_SAR_PROJECT_ROOT "" CACHE PATH "rl_sar checkout root")
+if(NOT RL_SAR_PROJECT_ROOT)
+    get_filename_component(RL_SAR_PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+endif()
+set(PROJECT_ROOT_DIR "${RL_SAR_PROJECT_ROOT}")
 
 add_definitions(-DCMAKE_CURRENT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
-add_definitions(-DPOLICY_DIR="${PROJECT_ROOT_DIR}/policy")
+add_definitions(-DPOLICY_DIR="${RL_SAR_PROJECT_ROOT}/policy")
 add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 
 if(NOT USE_CMAKE)
     if($ENV{ROS_DISTRO} MATCHES "noetic")
         find_package(catkin REQUIRED COMPONENTS
-            controller_manager
-            genmsg
-            joint_state_controller
-            robot_state_publisher
             roscpp
-            gazebo_ros
             std_msgs
-            tf
             geometry_msgs
-            robot_msgs
-            robot_joint_controller
-            rospy
+            nav_msgs
+            sensor_msgs
+            trajectory_msgs
         )
-        catkin_package(
-            CATKIN_DEPENDS
-            robot_joint_controller
-            rospy
-        )
+        catkin_package()
     elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
+        # The ROS 2 target is the real-robot inference node. Simulator
+        # targets and their transport dependencies are intentionally omitted.
         find_package(ament_cmake REQUIRED)
-        find_package(joint_state_broadcaster REQUIRED)
-        find_package(robot_state_publisher REQUIRED)
         find_package(rclcpp REQUIRED)
-        find_package(gazebo_ros REQUIRED)
         find_package(std_msgs REQUIRED)
-        find_package(robot_msgs REQUIRED)
-        find_package(robot_joint_controller REQUIRED)
-        find_package(rclpy REQUIRED)
-        find_package(gazebo_msgs REQUIRED)
-        find_package(std_srvs REQUIRED)
         find_package(geometry_msgs REQUIRED)
         find_package(nav_msgs REQUIRED)
         find_package(sensor_msgs REQUIRED)
@@ -119,13 +109,13 @@ if(NOT USE_CMAKE)
         find_package(unitree_go REQUIRED)
         ament_package()
     endif()
-    add_compile_options(${GAZEBO_CXX_FLAGS})
-    find_package(gazebo REQUIRED)
 endif()
 
 # Inference Runtime
 
-set(INFERENCE_RUNTIME_DIR "${PROJECT_ROOT_DIR}/library/inference_runtime")
+if(NOT INFERENCE_RUNTIME_DIR)
+    set(INFERENCE_RUNTIME_DIR "${RL_SAR_PROJECT_ROOT}/library/inference_runtime")
+endif()
 
 # ONNX Runtime Setup
 set(USE_ONNX "OFF")
@@ -493,34 +483,7 @@ if(NOT USE_CMAKE)
     endif()
 endif()
 
-# executable for rl sim
-if(NOT USE_CMAKE)
-    add_executable(rl_sim src/rl_sim.cpp)
-    target_link_libraries(rl_sim
-        rl_sdk
-        observation_buffer
-        ${YAML_CPP_LIBRARIES}
-        Threads::Threads
-    )
-    if($ENV{ROS_DISTRO} MATCHES "noetic")
-        target_link_libraries(rl_sim ${catkin_LIBRARIES})
-    elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
-        ament_target_dependencies(rl_sim
-            joint_state_broadcaster
-            robot_state_publisher
-            rclcpp
-            gazebo_ros
-            std_msgs
-            robot_msgs
-            robot_joint_controller
-            rclpy
-            gazebo_msgs
-            std_srvs
-            geometry_msgs
-        )
-        install(TARGETS rl_sim DESTINATION lib/${PROJECT_NAME})
-    endif()
-endif()
+# Simulation target omitted: rl_sar is built for real-robot inference only.
 
 # executable for rl real a1
 if(SYSTEM_TYPE STREQUAL "Linux")
@@ -708,8 +671,8 @@ endif()
 if(NOT USE_CMAKE)
     if($ENV{ROS_DISTRO} MATCHES "foxy|humble|jazzy|kilted")
         install(
-            DIRECTORY launch worlds ${PROJECT_ROOT_DIR}/policy
-            DESTINATION share/${PROJECT_NAME}/${dir}
+            DIRECTORY "${RL_SAR_PROJECT_ROOT}/policy"
+            DESTINATION share/${PROJECT_NAME}
         )
     endif()
 endif()
@@ -791,7 +754,7 @@ if(USE_MUJOCO)
     # Build executable
     add_executable(rl_sim_mujoco src/rl_sim_mujoco.cpp ${MUJOCO_SIMULATE_SRC} ${JOYSTICK_SRC})
     if(USE_MUJOCO_ROS2)
-        # Works with USE_CMAKE=ON (no gazebo/robot_msgs/unitree deps): only the
+        # Works with USE_CMAKE=ON (no simulator transport dependencies): only the
         # four message packages and rclcpp are needed for the canonical topics.
         find_package(ament_cmake REQUIRED)
         find_package(rclcpp REQUIRED)

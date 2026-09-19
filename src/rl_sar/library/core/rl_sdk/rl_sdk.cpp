@@ -692,6 +692,72 @@ void RL::InitRL(std::string robot_config_path)
     }
 }
 
+void RL::InitRLFromBundle(const std::string& config_path, const std::string& model_path)
+{
+    std::lock_guard<std::mutex> lock(this->model_mutex);
+    this->params.Set("response_observation", YAML::Node());
+    this->params.Set("use_dynamic_gait", YAML::Node());
+    this->params.Set("servo_observation_timing", YAML::Node(false));
+    this->params.Set("native_mrt", YAML::Node(false));
+    this->params.Set("policy_base_at_trunk", YAML::Node(false));
+
+    const YAML::Node file = YAML::LoadFile(config_path);
+    YAML::Node config = file;
+    // Exported configs are keyed by ``go2_x5/<bundle>``. Also accept a plain
+    // mapping so callers can provide a minimal private bundle.
+    if (file.IsMap() && file.size() == 1 && file.begin()->second.IsMap())
+        config = file.begin()->second;
+    if (!config.IsMap())
+        throw std::runtime_error("policy config must contain a YAML mapping: " + config_path);
+    for (auto it = config.begin(); it != config.end(); ++it)
+        this->params.Set(it->first.as<std::string>(), it->second);
+    // Exported policy bundles may omit simulator timing because the training
+    // environment owns it. Headless MuJoCo evaluation needs an explicit,
+    // stable default matching rl_sar's Go2 deployment.
+    if (!this->params.Has("dt")) this->params.Set("dt", YAML::Node(0.005f));
+    if (!this->params.Has("decimation")) this->params.Set("decimation", YAML::Node(4));
+
+    const auto terms = params.Get<std::vector<std::string>>("observations");
+    const std::vector<std::string> response_terms = {
+        "roboduet/reference_state", "roboduet/reference_rate", "roboduet/reference_minus_cmd",
+        "roboduet/ee_pos_in_base", "roboduet/response_deviation"};
+    response_enabled_ = std::any_of(terms.begin(), terms.end(), [&](const std::string& term) {
+        return std::find(response_terms.begin(), response_terms.end(), term) != response_terms.end();
+    });
+    if (response_enabled_)
+        response_observation_.Configure(params.Get<YAML::Node>("response_observation"),
+            params.Get<float>("dt") * params.Get<int>("decimation"), params.Get<int>("num_of_dofs"));
+    response_last_step_ = ~0ULL;
+    servo_last_step_ = ~0ULL;
+    servo_clock_.assign(4, 0.0f);
+    gait_indices = 0.0f;
+
+    const auto dog_commands_extra = this->params.Get<std::vector<float>>("dog_commands_extra");
+    if (!dog_commands_extra.empty()) {
+        static const std::vector<std::string> keys = {"gait_frequency", "footswing_height", "stance_width", "stance_length", "gait_duration"};
+        if (dog_commands_extra.size() != keys.size())
+            throw std::runtime_error("dog_commands_extra must contain five values");
+        for (size_t i = 0; i < keys.size(); ++i)
+            this->params.Set(keys[i], YAML::Node(dog_commands_extra[i]));
+    }
+
+    this->InitJointNum(this->params.Get<int>("num_of_dofs"));
+    this->InitControl();
+    response_initializing_ = true;
+    this->InitObservations();
+    response_initializing_ = false;
+    this->InitOutputs();
+    const auto observations_history = this->params.Get<std::vector<int>>("observations_history");
+    if (!observations_history.empty()) {
+        const int history_length = *std::max_element(observations_history.begin(), observations_history.end()) + 1;
+        this->history_obs_buf = ObservationBuffer(1, this->obs_dims, history_length,
+                                                  this->params.Get<std::string>("observations_history_priority"));
+    }
+    this->model = InferenceRuntime::ModelFactory::load_model(model_path);
+    if (!this->model)
+        throw std::runtime_error("Failed to load model from: " + model_path);
+}
+
 void RL::ComputeOutput(const std::vector<float> &actions, std::vector<float> &output_dof_pos, std::vector<float> &output_dof_vel, std::vector<float> &output_dof_tau)
 {
     std::vector<float> actions_scaled = actions * this->params.Get<std::vector<float>>("action_scale");
