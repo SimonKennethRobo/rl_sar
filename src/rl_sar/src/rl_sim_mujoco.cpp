@@ -200,7 +200,7 @@ void RL_Sim::GetState(RobotState<float> *state)
         // is ordered jointpos(N), jointvel(N), jointactuatorfrc(N), framequat(4),
         // gyro(3), accelerometer(3), framepos(3, WORLD), framelinvel(3, WORLD),
         // so the base state starts at 3N + 10. Stands in for the state
-        // estimator (FAST-LIO) used on hardware.
+        // Go2 InEKF odometry used on hardware.
         if (this->params.Get<bool>("use_base_state_sensor", false))
         {
             const int base_sensor_offset = 3 * this->params.Get<int>("num_of_dofs") + 10;
@@ -367,7 +367,10 @@ void RL_Sim::StartRosInterface()
     ros_base_command_sub_ = ros_node_->create_subscription<std_msgs::msg::Float32MultiArray>(
         "/go2_x5/base/command", 10, std::bind(&RL_Sim::RosBaseCommandCallback, this, std::placeholders::_1));
     ros_arm_target_pub_ = ros_node_->create_publisher<trajectory_msgs::msg::JointTrajectory>("/go2_x5/arm/command/target", rclcpp::QoS(10));
-    ros_odom_pub_ = ros_node_->create_publisher<nav_msgs::msg::Odometry>("/go2_x5/slam/odometry", rclcpp::SensorDataQoS());
+    ros_odom_pub_ = ros_node_->create_publisher<nav_msgs::msg::Odometry>("/go2_x5/slam/odom", rclcpp::SensorDataQoS());
+    // MuJoCo ground truth is the simulator equivalent of the mocap-fused
+    // world-frame estimate, so expose the same sample on the OCS2 topic.
+    ros_odom_mocap_pub_ = ros_node_->create_publisher<nav_msgs::msg::Odometry>("/go2_x5/slam/odom_mocap", rclcpp::SensorDataQoS());
     std_msgs::msg::String mode; mode.data = ros_arm_mode_; ros_arm_mode_pub_->publish(mode);
     ros_thread_ = std::thread([this]() { rclcpp::spin(ros_node_); });
 }
@@ -512,8 +515,10 @@ void RL_Sim::PublishRosArmTarget()
     ros_arm_target_pub_->publish(msg);
 }
 
-// Canonical /go2_x5/slam/odometry from the MJCF base ground truth (framepos,
-// framelinvel, framequat, gyro), standing in for FAST-LIO on hardware.
+// Canonical /go2_x5/slam/odom from the MJCF base ground truth (framepos,
+// framelinvel, framequat, gyro). The same sample is mirrored to
+// /go2_x5/slam/odom_mocap so the native OCS2 graph can use its fused-topic
+// contract while running against MuJoCo.
 // Convention matches go2_x5_ocs2_node: world-frame pose, body-frame twist.
 void RL_Sim::PublishRosOdometry()
 {
@@ -536,6 +541,7 @@ void RL_Sim::PublishRosOdometry()
     msg.twist.twist.angular.y = robot_state.imu.gyroscope[1];
     msg.twist.twist.angular.z = robot_state.imu.gyroscope[2];
     ros_odom_pub_->publish(msg);
+    if (ros_odom_mocap_pub_) ros_odom_mocap_pub_->publish(msg);
 }
 #endif
 

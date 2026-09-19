@@ -161,6 +161,7 @@ private:
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr ros_arm_mode_pub_;
     rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr ros_arm_target_pub_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr ros_odom_pub_;
+    rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr ros_odom_mocap_pub_;
     rclcpp::Subscription<trajectory_msgs::msg::JointTrajectory>::SharedPtr ros_arm_command_sub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr ros_arm_mode_sub_;
     rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr ros_base_command_sub_;

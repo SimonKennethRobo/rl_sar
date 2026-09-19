@@ -168,7 +168,7 @@ RLRealGo2Ros2::RLRealGo2Ros2(int argc, char **argv)
     if (x5_mode_)
     {
         odometry_subscriber_ = create_subscription<nav_msgs::msg::Odometry>(
-            "/go2_x5/slam/odometry", rclcpp::SensorDataQoS(),
+            "/go2_x5/slam/odom", rclcpp::SensorDataQoS(),
             [this](const nav_msgs::msg::Odometry::SharedPtr msg) { OdometryCallback(msg); });
         arm_state_subscriber_ = create_subscription<sensor_msgs::msg::JointState>(
             "/go2_x5/arm/state", rclcpp::SensorDataQoS(),
@@ -358,6 +358,7 @@ void RLRealGo2Ros2::RobotControl()
     {
         UpdateArmModeFromInput();
         CheckArmCommandWatchdog();
+        CheckOdometryWatchdog();
     }
     StateController(&robot_state, &robot_command);
     if (x5_mode_)
@@ -648,6 +649,45 @@ void RLRealGo2Ros2::CheckArmCommandWatchdog()
     std_msgs::msg::String hold;
     hold.data = "HOLD";
     ArmModeCallback(std::make_shared<std_msgs::msg::String>(hold));
+}
+
+void RLRealGo2Ros2::CheckOdometryWatchdog()
+{
+    const auto current = fsm.current_state_;
+    const bool active = current &&
+        (current->GetStateName() == "RLFSMStateRLLocomotion" ||
+         current->GetStateName() == "RLFSMStateOCS2Manip");
+
+    bool have_odometry = false;
+    SteadyTime received;
+    {
+        std::lock_guard<std::mutex> lock(external_obs_mutex_);
+        have_odometry = external_obs_.have_odometry;
+        received = external_obs_.odometry_stamp;
+    }
+    constexpr auto kOdometryTimeout = std::chrono::milliseconds(500);
+    const bool stale = !have_odometry ||
+        std::chrono::steady_clock::now() - received > kOdometryTimeout;
+
+    // Keep the fault latched while the robot is being brought down. It is
+    // cleared only after leaving the active locomotion states with fresh
+    // odometry, so a stale estimator cannot immediately re-enable control.
+    if (!active)
+    {
+        if (!stale) odometry_fault_latched_ = false;
+        return;
+    }
+    if (odometry_fault_latched_ || !stale) return;
+
+    odometry_fault_latched_ = true;
+    RCLCPP_ERROR(get_logger(),
+                 "Go2 odometry /go2_x5/slam/odom exceeded %.2f s; entering get-down and damping the arm",
+                 std::chrono::duration<double>(kOdometryTimeout).count());
+
+    std_msgs::msg::String damping;
+    damping.data = "DAMPING";
+    ArmModeCallback(std::make_shared<std_msgs::msg::String>(damping));
+    fsm.RequestStateChange("RLFSMStateGetDown");
 }
 
 // WBC mode only: MPC base channels replace the operator's velocity/pose
