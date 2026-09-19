@@ -4,6 +4,10 @@ set -e
 # Get script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
+# All relative paths (src/, cmake_build/, ...) are resolved inside this directory,
+# so the script can be invoked from anywhere.
+cd "${SCRIPT_DIR}"
+
 # Load common utilities
 source "${SCRIPT_DIR}/scripts/common.sh"
 
@@ -18,7 +22,6 @@ source "${SCRIPT_DIR}/scripts/common.sh"
 setup_inference_runtime() {
     print_header "[Setting up Inference Runtime]"
 
-    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
     DOWNLOAD_SCRIPT="${SCRIPT_DIR}/scripts/download_inference_runtime.sh"
 
     if [ -f "$DOWNLOAD_SCRIPT" ]; then
@@ -36,7 +39,6 @@ setup_inference_runtime() {
 setup_mujoco() {
     print_header "[Setting up MuJoCo]"
 
-    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
     DOWNLOAD_MUJOCO_SCRIPT="${SCRIPT_DIR}/scripts/download_mujoco.sh"
 
     if [ -f "$DOWNLOAD_MUJOCO_SCRIPT" ]; then
@@ -54,7 +56,6 @@ setup_mujoco() {
 setup_robot_descriptions() {
     print_header "[Setting up Robot Descriptions]"
 
-    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
     DOWNLOAD_ROBOT_DESC_SCRIPT="${SCRIPT_DIR}/scripts/download_robot_descriptions.sh"
 
     if [ -f "$DOWNLOAD_ROBOT_DESC_SCRIPT" ]; then
@@ -70,7 +71,6 @@ setup_robot_descriptions() {
 }
 
 setup_gazebo_models() {
-    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
     DOWNLOAD_GAZEBO_MODELS_SCRIPT="${SCRIPT_DIR}/scripts/download_gazebo_models.sh"
 
     if [ -f "$DOWNLOAD_GAZEBO_MODELS_SCRIPT" ]; then
@@ -107,6 +107,24 @@ run_mujoco_build() {
     cmake --build cmake_build -j$(nproc 2>/dev/null || echo 4)
 
     print_success "MuJoCo build completed!"
+}
+
+run_mujoco_ros2_build() {
+    print_header "[Running MuJoCo + ROS 2 Build]"
+    print_info "rl_sim_mujoco exposed through the canonical Go2-X5 ROS 2 topics"
+    print_info "Output: ${SCRIPT_DIR}/cmake_build/bin/rl_sim_mujoco"
+    print_separator
+
+    if [ -z "$ROS_DISTRO" ]; then
+        print_error "ROS environment not detected. Please source your ROS setup.bash first."
+        exit 1
+    fi
+
+    cmake src/rl_sar/ -B cmake_build -DUSE_CMAKE=ON -DUSE_MUJOCO=ON -DUSE_MUJOCO_ROS2=ON \
+        -DUSE_OCS2_BRIDGE=OFF -DBUILD_AGIBOT_D1=OFF
+    cmake --build cmake_build -j$(nproc 2>/dev/null || echo 4) --target rl_sim_mujoco
+
+    print_success "MuJoCo + ROS 2 build completed!"
 }
 
 run_ros_build() {
@@ -355,6 +373,8 @@ show_usage() {
     echo -e "  -m, --cmake      Build using CMake (for hardware deployment only)"
     echo -e "  -mj,--mujoco     Build with MuJoCo simulator support (CMake only)"
     echo -e "  -ocs2,--ocs2-bridge  Enable the OCS2 MPC ZeroMQ bridge (use with -mj)"
+    echo -e "  -mjr,--mujoco-ros2   Build only rl_sim_mujoco with the canonical Go2-X5 ROS 2 topics"
+    echo -e "                       (needs a sourced ROS 2 environment; Agibot D1 and OCS2 bridge off)"
     echo -e "  -h, --help       Show this help message"
     echo ""
     echo -e "${COLOR_INFO}Examples:${COLOR_RESET}"
@@ -365,6 +385,7 @@ show_usage() {
     echo -e "  $0 -m                 # Build with CMake for hardware deployment"
     echo -e "  $0 -mj                # Build with CMake and MuJoCo simulator support"
     echo -e "  $0 -mj -ocs2          # Build with MuJoCo and the OCS2 MPC bridge enabled"
+    echo -e "  $0 -mjr               # Build rl_sim_mujoco for the Go2-X5 ROS 2 co-simulation"
 }
 
 main() {
@@ -373,6 +394,7 @@ main() {
     local cmake_mode=false
     local mujoco_mode=false
     local ocs2_bridge=false
+    local mujoco_ros2_mode=false
 
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
@@ -381,12 +403,22 @@ main() {
             -m|--cmake) cmake_mode=true; shift ;;
             -mj|--mujoco) cmake_mode=true; mujoco_mode=true; shift ;;
             -ocs2|--ocs2-bridge) ocs2_bridge=true; shift ;;
+            -mjr|--mujoco-ros2) mujoco_ros2_mode=true; shift ;;
             -h|--help) show_usage; exit 0 ;;
             --) shift; packages+=("$@"); break ;;
             -*) print_error "Unknown option: $1"; show_usage; exit 1 ;;
             *) packages+=("$1"); shift ;;
         esac
     done
+
+    # Handle MuJoCo + ROS 2 (Go2-X5 co-simulation) build mode
+    if [ "$mujoco_ros2_mode" = true ]; then
+        setup_inference_runtime
+        setup_robot_descriptions
+        setup_mujoco
+        run_mujoco_ros2_build
+        exit 0
+    fi
 
     # Handle MuJoCo build mode
     if [ "$mujoco_mode" = true ]; then

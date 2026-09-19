@@ -1,4 +1,4 @@
-* [ ]
+
 
 # rl_sar
 
@@ -125,6 +125,12 @@ To use the Mujoco simulator
 ./build.sh -mj  # or ./build.sh --mujoco
 ```
 
+To use the Mujoco simulator together with the Go2-X5 ROS 2 co-simulation (only `rl_sim_mujoco` is built, with the canonical `/go2_x5/...` topics; requires a sourced ROS 2 environment):
+
+```bash
+./build.sh -mjr  # or ./build.sh --mujoco-ros2
+```
+
 For detailed usage instructions, you can check them via `./build.sh -h`:
 
 ```bash
@@ -134,6 +140,7 @@ Options:
   -c, --clean    Clean workspace (remove symlinks and build artifacts)
   -m, --cmake    Build using CMake (for hardware deployment only)
   -mj,--mujoco   Build with MuJoCo simulator support (CMake only)"
+  -mjr,--mujoco-ros2  Build rl_sim_mujoco with the Go2-X5 ROS 2 topics (needs sourced ROS 2)
   -h, --help     Show this help message
 
 Examples:
@@ -143,6 +150,7 @@ Examples:
   ./build.sh --clean package1   # Clean specific package and build artifacts
   ./build.sh -m                 # Build with CMake for hardware deployment
   ./build.sh -mj                # Build with CMake and MuJoCo simulator support
+  ./build.sh -mjr               # Build rl_sim_mujoco for the Go2-X5 ROS 2 co-simulation
 ```
 
 > [!TIP]
