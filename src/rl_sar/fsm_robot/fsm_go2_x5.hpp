@@ -189,7 +189,7 @@ public:
     RLFSMStateRLLocomotion(RL *rl) : RLFSMState(*rl, "RLFSMStateRLLocomotion") {}
 
     float percent_transition = 0.0f;
-    bool status_block_drawn_ = false;
+    int status_print_divider_ = 0;
 
 #ifdef USE_MUJOCO
     // Random-walk arm disturbance, mirroring RoboDuet's
@@ -206,7 +206,7 @@ public:
 
     void Enter() override
     {
-        status_block_drawn_ = false;
+        status_print_divider_ = 0;
         percent_transition = 0.0f;
         rl.episode_length_buf = 0;
         // Training resets the gait clock on episode reset; match that here so
@@ -256,12 +256,14 @@ public:
         const std::string fsm_state = rl.fsm.current_state_
             ? rl.fsm.current_state_->GetStateName()
             : "<none>";
-        if (status_block_drawn_) std::cout << "\033[3A";
-        std::cout << "\033[2K\r" << LOGGER::INFO
+        if (++status_print_divider_ >= 40)
+        {
+            status_print_divider_ = 0;
+            std::cout << LOGGER::INFO
                   << "RL Controller [" << rl.config_name << "]"
-                  << "\n\033[2K\r" << LOGGER::INFO
+                  << std::endl << LOGGER::INFO
                   << "  FSM: " << fsm_state
-                  << "\n\033[2K\r" << LOGGER::INFO
+                  << std::endl << LOGGER::INFO
                   << "  ARM: " << rl.arm_mode_display
                   << " | x:" << rl.control.x << " y:" << rl.control.y
                   << " yaw:" << rl.control.yaw
@@ -271,8 +273,8 @@ public:
 #ifdef USE_MUJOCO
                   << " arm_perturb:" << (arm_perturb_enabled_ ? "ON" : "off")
 #endif
-                  << std::flush;
-        status_block_drawn_ = true;
+                  << std::endl;
+        }
         RLControl();
     }
 
@@ -557,6 +559,15 @@ public:
         }
         if (!retracting_)
         {
+#ifdef USE_OCS2_BRIDGE
+            if (rl.control.current_keyboard == Input::Keyboard::Num4 ||
+                rl.control.current_gamepad == Input::Gamepad::RB_DPadRight ||
+                rl.control.current_keyboard == Input::Keyboard::Num5 ||
+                rl.control.current_gamepad == Input::Gamepad::RB_DPadDown)
+            {
+                return "RLFSMStateOCS2Manip";
+            }
+#endif
             if (rl.control.current_keyboard == Input::Keyboard::Num1 || rl.control.current_gamepad == Input::Gamepad::RB_DPadUp)
             {
                 BeginRetract("operator");
