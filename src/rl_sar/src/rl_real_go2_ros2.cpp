@@ -676,8 +676,20 @@ void RLRealGo2Ros2::ApplyArmMode(const RobotState<float> &state, RobotCommand<fl
     std::vector<float> target(dofs, 0.0F), velocity(dofs, 0.0F);
     if (mode == "HOME")
     {
-        for (int i = 0; i < dofs; ++i) target[i] = home[begin + i];
-        SetExternalArmTarget(target, velocity);
+        // HOME is owned by arx5_ros2. ArmModeCallback() already publishes
+        // HOME on /go2_x5/arm/mode/target, which calls reset_to_home() in the
+        // ARX driver. Do not also stream a trajectory from rl_sar: that would
+        // compete with the driver's native home controller.
+        for (int i = 0; i < dofs; ++i)
+        {
+            command->motor_command.q[begin + i] = state.motor_state.q[begin + i];
+            command->motor_command.dq[begin + i] = 0.0F;
+            command->motor_command.kp[begin + i] = 0.0F;
+            command->motor_command.kd[begin + i] = 0.0F;
+            command->motor_command.tau[begin + i] = 0.0F;
+        }
+        ClearExternalArmTarget();
+        return;
     }
     else if (mode == "HOLD")
     {
@@ -718,7 +730,7 @@ void RLRealGo2Ros2::PublishArmCommand(const RobotCommand<float> &command)
 {
     std::string current_mode;
     { std::lock_guard<std::mutex> lock(external_obs_mutex_); current_mode = arm_mode_; }
-    if (!arm_command_publisher_ || current_mode == "DAMPING") return;
+    if (!arm_command_publisher_ || current_mode == "DAMPING" || current_mode == "HOME") return;
     trajectory_msgs::msg::JointTrajectory msg;
     msg.header.stamp = now();
     msg.joint_names.resize(6);
