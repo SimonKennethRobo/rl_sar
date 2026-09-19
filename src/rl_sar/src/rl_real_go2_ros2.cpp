@@ -636,7 +636,10 @@ void RLRealGo2Ros2::CheckArmCommandWatchdog()
     }
     if (mode != "OCS2" && mode != "WBC") return;
     constexpr auto kArmCommandTimeout = std::chrono::milliseconds(500);
-    const bool stale = !seen ||
+    // WBC/OCS2 can be selected before the external MPC process is started.
+    // Do not fail during that initial waiting period. Once a command has been
+    // received, a stopped stream is a real fault and must fall back to HOLD.
+    const bool stale = seen &&
         std::chrono::steady_clock::now() - received > kArmCommandTimeout;
     if (!stale) return;
 

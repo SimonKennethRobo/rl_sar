@@ -438,7 +438,12 @@ void RL_Sim::CheckRosArmCommandWatchdog()
     }
     if (mode != "OCS2" && mode != "WBC") return;
     constexpr auto kArmCommandTimeout = std::chrono::milliseconds(500);
-    const bool stale = !valid ||
+    // Entering WBC/OCS2 is also the way the operator arms the external
+    // controller. The controller may be started a few seconds later, so an
+    // invalid target during this initial waiting period is not a fault. Once
+    // the first target has arrived, keep the watchdog armed and fall back to
+    // HOLD if the stream subsequently stops.
+    const bool stale = valid &&
         std::chrono::steady_clock::now() - received > kArmCommandTimeout;
     if (!stale) return;
     std::cout << LOGGER::WARNING
