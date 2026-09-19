@@ -289,8 +289,8 @@ public:
 #ifdef USE_MUJOCO
     void StepArmPerturbation()
     {
-        // 'N' is already the global navigation-mode toggle (rl_sdk.cpp); use 'B'.
-        if (rl.control.current_keyboard == Input::Keyboard::B || rl.control.current_gamepad == Input::Gamepad::LB_Y)
+        // B is reserved for get-down/damping; use V for the keyboard toggle.
+        if (rl.control.current_keyboard == Input::Keyboard::V || rl.control.current_gamepad == Input::Gamepad::LB_Y)
         {
             arm_perturb_enabled_ = !arm_perturb_enabled_;
             if (!arm_perturb_enabled_)
