@@ -241,16 +241,14 @@ void RL_Sim::RobotControl()
     this->StateController(&this->robot_state, &this->robot_command);
 
 #ifdef USE_MUJOCO_ROS2
-    // Arm mode keys, same assignment as the real robot node: 2 OCS2, 3 HOME,
-    // 4 HOLD, 5 DAMPING, 6 WBC.
+    // Arm mode keys: 2 HOLD, 3 HOME, 4 WBC. GetDown/Passive set damping.
     {
         const auto key = this->control.current_keyboard;
         std::string key_mode;
-        if (key == Input::Keyboard::Num2) key_mode = "OCS2";
+        if (key == Input::Keyboard::Num2) key_mode = "HOLD";
         else if (key == Input::Keyboard::Num3) key_mode = "HOME";
-        else if (key == Input::Keyboard::Num4) key_mode = "HOLD";
-        else if (key == Input::Keyboard::Num5) key_mode = "DAMPING";
-        else if (key == Input::Keyboard::Num6) key_mode = "WBC";
+        else if (key == Input::Keyboard::Num4) key_mode = "WBC";
+        else if (key == Input::Keyboard::Num9 || key == Input::Keyboard::P) key_mode = "DAMPING";
         if (!key_mode.empty())
         {
             auto request = std::make_shared<std_msgs::msg::String>();

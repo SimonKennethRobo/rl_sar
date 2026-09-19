@@ -584,6 +584,15 @@ void RLRealGo2Ros2::ArmModeCallback(const std_msgs::msg::String::SharedPtr msg)
     }
     if (mode == "DAMPING") ClearExternalArmTarget();
     PublishArmMode(mode);
+#ifdef USE_OCS2_BRIDGE
+    // A mode request may come from ROS without a simultaneous FSM key. WBC
+    // therefore also enters the bridge-backed state here.
+    if (mode == "WBC" && fsm.current_state_ &&
+        fsm.current_state_->GetStateName() == "RLFSMStateRLLocomotion")
+    {
+        fsm.RequestStateChange("RLFSMStateOCS2Manip");
+    }
+#endif
 }
 
 void RLRealGo2Ros2::BaseCommandCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg)
@@ -627,16 +636,14 @@ void RLRealGo2Ros2::ApplyBaseCommand()
 void RLRealGo2Ros2::UpdateArmModeFromInput()
 {
     std::string mode;
-    if (control.current_keyboard == Input::Keyboard::Num3 || control.current_gamepad == Input::Gamepad::RB_DPadLeft)
-        mode = "HOME";
-    else if (control.current_keyboard == Input::Keyboard::Num4 || control.current_gamepad == Input::Gamepad::RB_DPadRight)
+    if (control.current_keyboard == Input::Keyboard::Num2 || control.current_gamepad == Input::Gamepad::Y)
         mode = "HOLD";
-    else if (control.current_keyboard == Input::Keyboard::Num5 || control.current_gamepad == Input::Gamepad::LB_DPadDown)
-        mode = "DAMPING";
-    else if (control.current_keyboard == Input::Keyboard::Num2 || control.current_gamepad == Input::Gamepad::RB_DPadDown)
-        mode = "OCS2";
-    else if (control.current_keyboard == Input::Keyboard::Num6 || control.current_gamepad == Input::Gamepad::LB_DPadUp)
+    else if (control.current_keyboard == Input::Keyboard::Num3 || control.current_gamepad == Input::Gamepad::RB_DPadLeft)
+        mode = "HOME";
+    else if (control.current_keyboard == Input::Keyboard::Num4 || control.current_gamepad == Input::Gamepad::RB_DPadDown)
         mode = "WBC";
+    else if (control.current_keyboard == Input::Keyboard::Num9 || control.current_gamepad == Input::Gamepad::B)
+        mode = "DAMPING";
     else if (control.current_keyboard == Input::Keyboard::P || control.current_gamepad == Input::Gamepad::LB_X)
         mode = "DAMPING";
     if (!mode.empty())
@@ -644,6 +651,7 @@ void RLRealGo2Ros2::UpdateArmModeFromInput()
         std_msgs::msg::String msg;
         msg.data = mode;
         ArmModeCallback(std::make_shared<std_msgs::msg::String>(msg));
+
     }
 }
 
