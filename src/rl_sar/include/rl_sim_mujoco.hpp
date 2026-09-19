@@ -154,6 +154,7 @@ private:
     void RosArmModeCallback(const std_msgs::msg::String::SharedPtr msg);
     void RosBaseCommandCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg);
     void ApplyRosBaseCommand();
+    void CheckRosArmCommandWatchdog();
     std::shared_ptr<rclcpp::Node> ros_node_;
     std::thread ros_thread_;
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr ros_arm_state_pub_;
@@ -168,6 +169,7 @@ private:
     std::vector<float> ros_arm_target_q_ = std::vector<float>(6, 0.0f);
     std::vector<float> ros_arm_target_dq_ = std::vector<float>(6, 0.0f);
     bool ros_arm_target_valid_ = false;
+    std::chrono::steady_clock::time_point ros_arm_target_time_{};
     bool ros_arm_hold_valid_ = false;
     // [vx, vy, wz, height, pitch, roll] from /go2_x5/base/command (WBC mode)
     std::array<float, 6> ros_base_command_{};

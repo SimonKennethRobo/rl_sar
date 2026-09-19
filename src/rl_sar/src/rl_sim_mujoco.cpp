@@ -257,6 +257,7 @@ void RL_Sim::RobotControl()
             this->RosArmModeCallback(request);
         }
     }
+    this->CheckRosArmCommandWatchdog();
     // Mirror the real Go2 safety coupling: passive/damping legs imply a
     // damping arm, even if the last operator mode was HOLD or OCS2.
     const bool base_damping = this->fsm.current_state_ &&
@@ -375,6 +376,7 @@ void RL_Sim::RosArmCommandCallback(const trajectory_msgs::msg::JointTrajectory::
 {
     if (msg->points.empty() || msg->points.back().positions.size() < 6) return;
     std::lock_guard<std::mutex> lock(ros_arm_mutex_);
+    ros_arm_target_time_ = std::chrono::steady_clock::now();
     for (int i = 0; i < 6; ++i) {
         ros_arm_target_q_[i] = static_cast<float>(msg->points.back().positions[i]);
         ros_arm_target_dq_[i] = i < static_cast<int>(msg->points.back().velocities.size()) ? static_cast<float>(msg->points.back().velocities[i]) : 0.0f;
@@ -390,11 +392,20 @@ void RL_Sim::RosArmModeCallback(const std_msgs::msg::String::SharedPtr msg)
     {
         std::lock_guard<std::mutex> lock(ros_arm_mutex_);
         const bool was_mpc = ros_arm_mode_ == "OCS2" || ros_arm_mode_ == "WBC";
-        if ((mode == "OCS2" || mode == "WBC") && !was_mpc) ros_arm_target_valid_ = false;
+        if (mode == "OCS2" || mode == "WBC")
+        {
+            if (!was_mpc) ros_arm_target_valid_ = false;
+            ros_arm_target_time_ = std::chrono::steady_clock::now();
+        }
         ros_arm_mode_ = mode;
         this->arm_mode_display = mode;
     }
     if (ros_arm_mode_pub_) { std_msgs::msg::String state; state.data = mode; ros_arm_mode_pub_->publish(state); }
+    if (mode == "HOLD" && this->fsm.current_state_ &&
+        this->fsm.current_state_->GetStateName() == "RLFSMStateOCS2Manip")
+    {
+        this->fsm.RequestStateChange("RLFSMStateRLLocomotion");
+    }
 #ifdef USE_OCS2_BRIDGE
     if ((mode == "OCS2" || mode == "WBC") && this->fsm.current_state_ &&
         this->fsm.current_state_->GetStateName() == "RLFSMStateRLLocomotion")
@@ -412,6 +423,30 @@ void RL_Sim::PublishRosArmState()
     sensor_msgs::msg::JointState msg; msg.header.stamp = ros_node_->now();
     for (int i = 0; i < dofs; ++i) { msg.name.push_back("x5_joint" + std::to_string(i + 1)); msg.position.push_back(robot_state.motor_state.q[begin + i]); msg.velocity.push_back(robot_state.motor_state.dq[begin + i]); }
     ros_arm_state_pub_->publish(msg);
+}
+
+void RL_Sim::CheckRosArmCommandWatchdog()
+{
+    std::string mode;
+    bool valid = false;
+    std::chrono::steady_clock::time_point received;
+    {
+        std::lock_guard<std::mutex> lock(ros_arm_mutex_);
+        mode = ros_arm_mode_;
+        valid = ros_arm_target_valid_;
+        received = ros_arm_target_time_;
+    }
+    if (mode != "OCS2" && mode != "WBC") return;
+    constexpr auto kArmCommandTimeout = std::chrono::milliseconds(500);
+    const bool stale = !valid ||
+        std::chrono::steady_clock::now() - received > kArmCommandTimeout;
+    if (!stale) return;
+    std::cout << LOGGER::WARNING
+              << "[MuJoCo] Arm MPC command watchdog expired; switching to HOLD"
+              << std::endl;
+    auto hold = std::make_shared<std_msgs::msg::String>();
+    hold->data = "HOLD";
+    this->RosArmModeCallback(hold);
 }
 
 void RL_Sim::RosBaseCommandCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg)
