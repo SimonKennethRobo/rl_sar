@@ -300,6 +300,8 @@ public:
     // Indices are policy order, i.e. the last num_arm_dofs entries.
     void SetExternalArmTarget(const std::vector<float> &q, const std::vector<float> &dq);
     void ClearExternalArmTarget();
+    // True while a FSM or planner is supplying arm joint targets.
+    bool HasExternalArmTarget() const;
 
     // Whole-body (WBC) mode: the MPC drives the locomotion command channels.
     // cmd = [vx, vy, wz, body_height, body_pitch, body_roll]. Values are clamped

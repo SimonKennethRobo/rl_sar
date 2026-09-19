@@ -313,7 +313,9 @@ void RL_Sim::RobotControl()
                 robot_command.motor_command.kd[begin + i] = 0.0f;
                 robot_command.motor_command.tau[begin + i] = 0.0f;
             }
-        } else if (ros_arm_mode_ == "OCS2" || ros_arm_mode_ == "WBC" || ros_arm_mode_ == "HOLD" || ros_arm_mode_ == "HOME") {
+        } else if (!this->HasExternalArmTarget() &&
+                   (ros_arm_mode_ == "OCS2" || ros_arm_mode_ == "WBC" ||
+                    ros_arm_mode_ == "HOLD" || ros_arm_mode_ == "HOME")) {
             const auto home = this->params.Get<std::vector<float>>("default_dof_pos");
             // OCS2 with no fresh request yet (just switched in) holds the
             // current pose instead of jumping to a stale/zero target.
