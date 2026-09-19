@@ -275,6 +275,8 @@ public:
     // others
     int motiontime = 0;
     std::string robot_name, config_name;
+    // Operator-facing arm mode shown alongside the locomotion FSM state.
+    std::string arm_mode_display = "HOLD";
     bool simulation_running = true;
     std::string ang_vel_axis = "body";  // "world" or "body"
     unsigned long long episode_length_buf = 0;
