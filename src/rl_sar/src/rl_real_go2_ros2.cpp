@@ -581,6 +581,7 @@ void RLRealGo2Ros2::ArmModeCallback(const std_msgs::msg::String::SharedPtr msg)
             arm_command_dq_.assign(arm_q_.size(), 0.0F);
         }
         arm_mode_ = mode;
+        arm_mode_display = mode;
     }
     if (mode == "DAMPING") ClearExternalArmTarget();
     PublishArmMode(mode);

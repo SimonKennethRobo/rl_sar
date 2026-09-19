@@ -189,6 +189,7 @@ public:
     RLFSMStateRLLocomotion(RL *rl) : RLFSMState(*rl, "RLFSMStateRLLocomotion") {}
 
     float percent_transition = 0.0f;
+    bool status_block_drawn_ = false;
 
 #ifdef USE_MUJOCO
     // Random-walk arm disturbance, mirroring RoboDuet's
@@ -205,6 +206,7 @@ public:
 
     void Enter() override
     {
+        status_block_drawn_ = false;
         percent_transition = 0.0f;
         rl.episode_length_buf = 0;
         // Training resets the gait clock on episode reset; match that here so
@@ -254,15 +256,23 @@ public:
         const std::string fsm_state = rl.fsm.current_state_
             ? rl.fsm.current_state_->GetStateName()
             : "<none>";
-        std::cout << "\r\033[K" << std::flush << LOGGER::INFO << "RL Controller [" << rl.config_name << "]"
-                  << " FSM:" << fsm_state
-                  << " x:" << rl.control.x << " y:" << rl.control.y << " yaw:" << rl.control.yaw
-                  << " pitch:" << rl.control.body_pitch << " roll:" << rl.control.body_roll
+        if (status_block_drawn_) std::cout << "\033[3A";
+        std::cout << "\033[2K\r" << LOGGER::INFO
+                  << "RL Controller [" << rl.config_name << "]"
+                  << "\n\033[2K\r" << LOGGER::INFO
+                  << "  FSM: " << fsm_state
+                  << "\n\033[2K\r" << LOGGER::INFO
+                  << "  ARM: " << rl.arm_mode_display
+                  << " | x:" << rl.control.x << " y:" << rl.control.y
+                  << " yaw:" << rl.control.yaw
+                  << " pitch:" << rl.control.body_pitch
+                  << " roll:" << rl.control.body_roll
                   << " height:" << rl.control.body_height
 #ifdef USE_MUJOCO
                   << " arm_perturb:" << (arm_perturb_enabled_ ? "ON" : "off")
 #endif
                   << std::flush;
+        status_block_drawn_ = true;
         RLControl();
     }
 

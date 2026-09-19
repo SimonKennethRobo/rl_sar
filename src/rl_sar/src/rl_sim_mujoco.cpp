@@ -266,6 +266,7 @@ void RL_Sim::RobotControl()
         if (ros_arm_mode_ != "DAMPING")
         {
             ros_arm_mode_ = "DAMPING";
+            this->arm_mode_display = ros_arm_mode_;
             if (ros_arm_mode_pub_)
             {
                 std_msgs::msg::String mode;
@@ -388,6 +389,7 @@ void RL_Sim::RosArmModeCallback(const std_msgs::msg::String::SharedPtr msg)
         const bool was_mpc = ros_arm_mode_ == "OCS2" || ros_arm_mode_ == "WBC";
         if ((mode == "OCS2" || mode == "WBC") && !was_mpc) ros_arm_target_valid_ = false;
         ros_arm_mode_ = mode;
+        this->arm_mode_display = mode;
     }
     if (ros_arm_mode_pub_) { std_msgs::msg::String state; state.data = mode; ros_arm_mode_pub_->publish(state); }
 }
