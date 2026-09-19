@@ -251,7 +251,11 @@ public:
         StepArmPerturbation();
 #endif
 
+        const std::string fsm_state = rl.fsm.current_state_
+            ? rl.fsm.current_state_->GetStateName()
+            : "<none>";
         std::cout << "\r\033[K" << std::flush << LOGGER::INFO << "RL Controller [" << rl.config_name << "]"
+                  << " FSM:" << fsm_state
                   << " x:" << rl.control.x << " y:" << rl.control.y << " yaw:" << rl.control.yaw
                   << " pitch:" << rl.control.body_pitch << " roll:" << rl.control.body_roll
                   << " height:" << rl.control.body_height

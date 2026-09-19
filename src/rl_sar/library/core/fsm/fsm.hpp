@@ -90,6 +90,8 @@ public:
             }
 
             mode_ = Mode::NORMAL;
+            std::cout << LOGGER::NOTE << "[FSM] Active state: "
+                      << current_state_->GetStateName() << std::endl;
             current_state_->Run();
         }
     }
