@@ -95,6 +95,7 @@ private:
     void ApplyArmMode(const RobotState<float> &state, RobotCommand<float> *command);
     void BaseCommandCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg);
     void ApplyBaseCommand();
+    void CheckArmCommandWatchdog();
     void PublishArmCommand(const RobotCommand<float> &command);
     void PublishArmMode(const std::string &mode);
     void WarnExternalObservations(const std::string &reason);
@@ -144,6 +145,8 @@ private:
     bool have_arm_state_ = false;
     std::vector<float> arm_command_q_ = std::vector<float>(6, 0.0f);
     std::vector<float> arm_command_dq_ = std::vector<float>(6, 0.0f);
+    std::chrono::steady_clock::time_point arm_command_time_{};
+    bool arm_command_seen_ = false;
     std::string arm_mode_ = "HOLD";
     // WBC mode: [vx, vy, wz, height, pitch, roll] from /go2_x5/base/command
     std::array<float, 6> base_command_{};

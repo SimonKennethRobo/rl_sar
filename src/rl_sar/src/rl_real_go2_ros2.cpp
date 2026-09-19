@@ -354,7 +354,11 @@ void RLRealGo2Ros2::SetCommand(const RobotCommand<float> *command)
 void RLRealGo2Ros2::RobotControl()
 {
     GetState(&robot_state);
-    if (x5_mode_) UpdateArmModeFromInput();
+    if (x5_mode_)
+    {
+        UpdateArmModeFromInput();
+        CheckArmCommandWatchdog();
+    }
     StateController(&robot_state, &robot_command);
     if (x5_mode_)
     {
@@ -555,6 +559,8 @@ void RLRealGo2Ros2::ArmCommandCallback(const trajectory_msgs::msg::JointTrajecto
     {
         std::lock_guard<std::mutex> lock(external_obs_mutex_);
         mode = arm_mode_;
+        arm_command_time_ = std::chrono::steady_clock::now();
+        arm_command_seen_ = true;
         // Buffer the newest request even if the mode callback is delivered a
         // few DDS scheduling cycles later; the mode transition will consume it.
         arm_command_q_ = q;
@@ -576,15 +582,27 @@ void RLRealGo2Ros2::ArmModeCallback(const std_msgs::msg::String::SharedPtr msg)
     {
         std::lock_guard<std::mutex> lock(external_obs_mutex_);
         if (mode == "HOLD" && have_arm_state_) arm_hold_q_ = arm_q_;
-        if ((mode == "OCS2" || mode == "WBC") && have_arm_state_ && arm_command_q_.size() == arm_q_.size()) {
-            arm_command_q_ = arm_q_;
-            arm_command_dq_.assign(arm_q_.size(), 0.0F);
+        if (mode == "OCS2" || mode == "WBC")
+        {
+            if (have_arm_state_ && arm_command_q_.size() == arm_q_.size())
+            {
+                arm_command_q_ = arm_q_;
+                arm_command_dq_.assign(arm_q_.size(), 0.0F);
+            }
+            arm_command_seen_ = false;
+            arm_command_time_ = std::chrono::steady_clock::now();
         }
         arm_mode_ = mode;
         arm_mode_display = mode;
     }
     if (mode == "DAMPING") ClearExternalArmTarget();
     PublishArmMode(mode);
+    if (mode == "HOLD" && fsm.current_state_ &&
+        fsm.current_state_->GetStateName() == "RLFSMStateOCS2Manip")
+    {
+        // HOLD returns base authority to the RL locomotion/remote-control FSM.
+        fsm.RequestStateChange("RLFSMStateRLLocomotion");
+    }
 #ifdef USE_OCS2_BRIDGE
     // A mode request may come from ROS without a simultaneous FSM key. WBC
     // therefore also enters the bridge-backed state here.
@@ -603,6 +621,30 @@ void RLRealGo2Ros2::BaseCommandCallback(const std_msgs::msg::Float32MultiArray::
     std::copy(msg->data.begin(), msg->data.end(), base_command_.begin());
     base_command_time_ = std::chrono::steady_clock::now();
     base_command_seen_ = true;
+}
+
+void RLRealGo2Ros2::CheckArmCommandWatchdog()
+{
+    std::string mode;
+    bool seen = false;
+    std::chrono::steady_clock::time_point received;
+    {
+        std::lock_guard<std::mutex> lock(external_obs_mutex_);
+        mode = arm_mode_;
+        seen = arm_command_seen_;
+        received = arm_command_time_;
+    }
+    if (mode != "OCS2" && mode != "WBC") return;
+    constexpr auto kArmCommandTimeout = std::chrono::milliseconds(500);
+    const bool stale = !seen ||
+        std::chrono::steady_clock::now() - received > kArmCommandTimeout;
+    if (!stale) return;
+
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+                         "Arm MPC command watchdog expired; switching to HOLD");
+    std_msgs::msg::String hold;
+    hold.data = "HOLD";
+    ArmModeCallback(std::make_shared<std_msgs::msg::String>(hold));
 }
 
 // WBC mode only: MPC base channels replace the operator's velocity/pose
