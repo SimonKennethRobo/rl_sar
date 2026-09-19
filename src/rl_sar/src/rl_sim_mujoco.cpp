@@ -241,15 +241,22 @@ void RL_Sim::RobotControl()
     this->StateController(&this->robot_state, &this->robot_command);
 
 #ifdef USE_MUJOCO_ROS2
-    // Arm mode keys: 2 HOLD, 3 HOME, 4 OCS2, 5 WBC. GetDown/Passive set damping.
+    // Arm mode input: keyboard 2/3/4/5 or Xbox Y/RB+D-pad. GetDown/Passive set damping.
     {
         const auto key = this->control.current_keyboard;
+        const auto gamepad = this->control.current_gamepad;
         std::string key_mode;
-        if (key == Input::Keyboard::Num2) key_mode = "HOLD";
-        else if (key == Input::Keyboard::Num3) key_mode = "HOME";
-        else if (key == Input::Keyboard::Num4) key_mode = "OCS2";
-        else if (key == Input::Keyboard::Num5) key_mode = "WBC";
-        else if (key == Input::Keyboard::Num9 || key == Input::Keyboard::P) key_mode = "DAMPING";
+        if (key == Input::Keyboard::Num2 || gamepad == Input::Gamepad::Y)
+            key_mode = "HOLD";
+        else if (key == Input::Keyboard::Num3 || gamepad == Input::Gamepad::RB_DPadLeft)
+            key_mode = "HOME";
+        else if (key == Input::Keyboard::Num4 || gamepad == Input::Gamepad::RB_DPadRight)
+            key_mode = "OCS2";
+        else if (key == Input::Keyboard::Num5 || gamepad == Input::Gamepad::RB_DPadDown)
+            key_mode = "WBC";
+        else if (key == Input::Keyboard::Num9 || key == Input::Keyboard::P ||
+                 gamepad == Input::Gamepad::B || gamepad == Input::Gamepad::LB_X)
+            key_mode = "DAMPING";
         if (!key_mode.empty())
         {
             auto request = std::make_shared<std_msgs::msg::String>();
@@ -621,8 +628,8 @@ void RL_Sim::GetSysJoystick()
     if (this->sys_js_button[4].pressed && this->sys_js_button[10].on_press) this->control.SetGamepad(Input::Gamepad::LB_RStick);
     if (this->sys_js_button[4].pressed && this->sys_js_axis[7] < 0) this->control.SetGamepad(Input::Gamepad::LB_DPadUp);
     if (this->sys_js_button[4].pressed && this->sys_js_axis[7] > 0) this->control.SetGamepad(Input::Gamepad::LB_DPadDown);
-    if (this->sys_js_button[4].pressed && this->sys_js_axis[6] > 0) this->control.SetGamepad(Input::Gamepad::LB_DPadRight);
-    if (this->sys_js_button[4].pressed && this->sys_js_axis[6] < 0) this->control.SetGamepad(Input::Gamepad::LB_DPadLeft);
+    if (this->sys_js_button[4].pressed && this->sys_js_axis[6] > 0) this->control.SetGamepad(Input::Gamepad::LB_DPadLeft);
+    if (this->sys_js_button[4].pressed && this->sys_js_axis[6] < 0) this->control.SetGamepad(Input::Gamepad::LB_DPadRight);
     if (this->sys_js_button[5].pressed && this->sys_js_button[0].on_press) this->control.SetGamepad(Input::Gamepad::RB_A);
     if (this->sys_js_button[5].pressed && this->sys_js_button[1].on_press) this->control.SetGamepad(Input::Gamepad::RB_B);
     if (this->sys_js_button[5].pressed && this->sys_js_button[2].on_press) this->control.SetGamepad(Input::Gamepad::RB_X);
@@ -631,8 +638,8 @@ void RL_Sim::GetSysJoystick()
     if (this->sys_js_button[5].pressed && this->sys_js_button[10].on_press) this->control.SetGamepad(Input::Gamepad::RB_RStick);
     if (this->sys_js_button[5].pressed && this->sys_js_axis[7] < 0) this->control.SetGamepad(Input::Gamepad::RB_DPadUp);
     if (this->sys_js_button[5].pressed && this->sys_js_axis[7] > 0) this->control.SetGamepad(Input::Gamepad::RB_DPadDown);
-    if (this->sys_js_button[5].pressed && this->sys_js_axis[6] > 0) this->control.SetGamepad(Input::Gamepad::RB_DPadRight);
-    if (this->sys_js_button[5].pressed && this->sys_js_axis[6] < 0) this->control.SetGamepad(Input::Gamepad::RB_DPadLeft);
+    if (this->sys_js_button[5].pressed && this->sys_js_axis[6] > 0) this->control.SetGamepad(Input::Gamepad::RB_DPadLeft);
+    if (this->sys_js_button[5].pressed && this->sys_js_axis[6] < 0) this->control.SetGamepad(Input::Gamepad::RB_DPadRight);
     if (this->sys_js_button[4].pressed && this->sys_js_button[5].on_press) this->control.SetGamepad(Input::Gamepad::LB_RB);
 
     auto clamp_to_param = [this](float value, const std::string &key) -> float
