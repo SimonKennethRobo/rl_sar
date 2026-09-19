@@ -95,6 +95,7 @@ private:
     void ApplyArmMode(const RobotState<float> &state, RobotCommand<float> *command);
     void BaseCommandCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg);
     void ApplyBaseCommand();
+    void CheckOdometryWatchdog();
     void PublishArmCommand(const RobotCommand<float> &command);
     void PublishArmMode(const std::string &mode);
     void WarnExternalObservations(const std::string &reason);
@@ -152,6 +153,7 @@ private:
     bool base_driven_ = false;
     std::string last_published_arm_mode_;
     SteadyTime last_external_obs_warning_{};
+    bool odometry_fault_latched_ = false;
 };
 
 #endif  // RL_REAL_GO2_ROS2_HPP
