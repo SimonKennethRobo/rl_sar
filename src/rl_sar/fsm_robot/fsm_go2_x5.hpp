@@ -36,7 +36,7 @@ public:
 
     void Enter() override
     {
-        std::cout << LOGGER::NOTE << "Entered passive mode. Press '0' (Keyboard) or 'A' (Gamepad) to switch to RLFSMStateGetUp." << std::endl;
+        std::cout << LOGGER::NOTE << "Entered damping/passive mode. Press '0' (Keyboard) or 'A' (Gamepad) to switch to RLFSMStateGetUp." << std::endl;
     }
 
     void Run() override
@@ -136,9 +136,8 @@ public:
             {
                 return "RLFSMStateRLLocomotion";
             }
-            else if (rl.control.current_keyboard == Input::Keyboard::Num2 || rl.control.current_gamepad == Input::Gamepad::RB_DPadDown)
+            else if (rl.control.current_keyboard == Input::Keyboard::Num2 || rl.control.current_gamepad == Input::Gamepad::Y)
             {
-                // OCS2 is an arm mode now; the leg FSM remains locomotion.
                 return "RLFSMStateRLLocomotion";
             }
             else if (rl.control.current_keyboard == Input::Keyboard::Num9 || rl.control.current_gamepad == Input::Gamepad::B)
@@ -540,7 +539,6 @@ public:
     {
         if (rl.control.current_keyboard == Input::Keyboard::P || rl.control.current_gamepad == Input::Gamepad::LB_X)
         {
-            // Emergency stop wins over a graceful retract.
             return "RLFSMStatePassive";
         }
         if (!retracting_)
@@ -554,6 +552,15 @@ public:
             {
                 BeginRetract("operator");
                 next_state_ = "RLFSMStateGetDown";
+            }
+            else if (rl.control.current_keyboard == Input::Keyboard::Num2 ||
+                     rl.control.current_gamepad == Input::Gamepad::Y ||
+                     rl.control.current_keyboard == Input::Keyboard::Num3 ||
+                     rl.control.current_gamepad == Input::Gamepad::RB_DPadLeft)
+            {
+                // HOLD/HOME return base authority to the operator.
+                BeginRetract("operator");
+                next_state_ = "RLFSMStateRLLocomotion";
             }
         }
         if (retracting_ && retract_percent_ >= 1.0f)
