@@ -661,11 +661,9 @@ void RLRealGo2Ros2::UpdateArmModeFromInput()
 void RLRealGo2Ros2::ApplyArmMode(const RobotState<float> &state, RobotCommand<float> *command)
 {
     std::string mode;
-    std::vector<float> hold;
     {
         std::lock_guard<std::mutex> lock(external_obs_mutex_);
         mode = arm_mode_;
-        hold = arm_hold_q_;
     }
     const int begin = params.Get<int>("num_leg_dofs");
     const int dofs = params.Get<int>("num_arm_dofs", 6);
@@ -693,9 +691,19 @@ void RLRealGo2Ros2::ApplyArmMode(const RobotState<float> &state, RobotCommand<fl
     }
     else if (mode == "HOLD")
     {
-        if (hold.size() != static_cast<size_t>(dofs)) hold.assign(state.motor_state.q.begin() + begin, state.motor_state.q.begin() + begin + dofs);
-        target = hold;
-        SetExternalArmTarget(target, velocity);
+        // HOLD is owned by arx5_ros2. Its mode callback latches the measured
+        // joint state and enables the SDK joint controller with its own gains.
+        // Keep the Unitree-side arm command inert and do not stream YAML gains.
+        for (int i = 0; i < dofs; ++i)
+        {
+            command->motor_command.q[begin + i] = state.motor_state.q[begin + i];
+            command->motor_command.dq[begin + i] = 0.0F;
+            command->motor_command.kp[begin + i] = 0.0F;
+            command->motor_command.kd[begin + i] = 0.0F;
+            command->motor_command.tau[begin + i] = 0.0F;
+        }
+        ClearExternalArmTarget();
+        return;
     }
     else if (mode == "DAMPING")
     {
@@ -730,7 +738,7 @@ void RLRealGo2Ros2::PublishArmCommand(const RobotCommand<float> &command)
 {
     std::string current_mode;
     { std::lock_guard<std::mutex> lock(external_obs_mutex_); current_mode = arm_mode_; }
-    if (!arm_command_publisher_ || current_mode == "DAMPING" || current_mode == "HOME") return;
+    if (!arm_command_publisher_ || current_mode == "DAMPING" || current_mode == "HOME" || current_mode == "HOLD") return;
     trajectory_msgs::msg::JointTrajectory msg;
     msg.header.stamp = now();
     msg.joint_names.resize(6);
