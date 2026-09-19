@@ -588,7 +588,7 @@ void RLRealGo2Ros2::ArmModeCallback(const std_msgs::msg::String::SharedPtr msg)
 #ifdef USE_OCS2_BRIDGE
     // A mode request may come from ROS without a simultaneous FSM key. WBC
     // therefore also enters the bridge-backed state here.
-    if (mode == "WBC" && fsm.current_state_ &&
+    if ((mode == "OCS2" || mode == "WBC") && fsm.current_state_ &&
         fsm.current_state_->GetStateName() == "RLFSMStateRLLocomotion")
     {
         fsm.RequestStateChange("RLFSMStateOCS2Manip");
@@ -641,7 +641,9 @@ void RLRealGo2Ros2::UpdateArmModeFromInput()
         mode = "HOLD";
     else if (control.current_keyboard == Input::Keyboard::Num3 || control.current_gamepad == Input::Gamepad::RB_DPadLeft)
         mode = "HOME";
-    else if (control.current_keyboard == Input::Keyboard::Num4 || control.current_gamepad == Input::Gamepad::RB_DPadDown)
+    else if (control.current_keyboard == Input::Keyboard::Num4 || control.current_gamepad == Input::Gamepad::RB_DPadRight)
+        mode = "OCS2";
+    else if (control.current_keyboard == Input::Keyboard::Num5 || control.current_gamepad == Input::Gamepad::RB_DPadDown)
         mode = "WBC";
     else if (control.current_keyboard == Input::Keyboard::Num9 || control.current_gamepad == Input::Gamepad::B)
         mode = "DAMPING";

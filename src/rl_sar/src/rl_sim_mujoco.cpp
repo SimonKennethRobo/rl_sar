@@ -241,13 +241,14 @@ void RL_Sim::RobotControl()
     this->StateController(&this->robot_state, &this->robot_command);
 
 #ifdef USE_MUJOCO_ROS2
-    // Arm mode keys: 2 HOLD, 3 HOME, 4 WBC. GetDown/Passive set damping.
+    // Arm mode keys: 2 HOLD, 3 HOME, 4 OCS2, 5 WBC. GetDown/Passive set damping.
     {
         const auto key = this->control.current_keyboard;
         std::string key_mode;
         if (key == Input::Keyboard::Num2) key_mode = "HOLD";
         else if (key == Input::Keyboard::Num3) key_mode = "HOME";
-        else if (key == Input::Keyboard::Num4) key_mode = "WBC";
+        else if (key == Input::Keyboard::Num4) key_mode = "OCS2";
+        else if (key == Input::Keyboard::Num5) key_mode = "WBC";
         else if (key == Input::Keyboard::Num9 || key == Input::Keyboard::P) key_mode = "DAMPING";
         if (!key_mode.empty())
         {
@@ -392,6 +393,13 @@ void RL_Sim::RosArmModeCallback(const std_msgs::msg::String::SharedPtr msg)
         this->arm_mode_display = mode;
     }
     if (ros_arm_mode_pub_) { std_msgs::msg::String state; state.data = mode; ros_arm_mode_pub_->publish(state); }
+#ifdef USE_OCS2_BRIDGE
+    if ((mode == "OCS2" || mode == "WBC") && this->fsm.current_state_ &&
+        this->fsm.current_state_->GetStateName() == "RLFSMStateRLLocomotion")
+    {
+        this->fsm.RequestStateChange("RLFSMStateOCS2Manip");
+    }
+#endif
 }
 
 void RL_Sim::PublishRosArmState()
