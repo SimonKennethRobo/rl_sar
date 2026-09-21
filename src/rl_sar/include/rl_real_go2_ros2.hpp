@@ -32,6 +32,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -86,6 +87,8 @@ private:
     void ArmCommandCallback(const trajectory_msgs::msg::JointTrajectory::SharedPtr msg);
     void ArmModeCallback(const std_msgs::msg::String::SharedPtr msg);
     void MotionResponseCallback(const unitree_api::msg::Response::SharedPtr msg);
+    void QueueFsmKey(const std::string &key);
+    void ApplyNextFsmKey();
 
     bool WaitForLowState(std::chrono::seconds timeout);
     bool DeactivateMotionService();
@@ -130,6 +133,10 @@ private:
     unitree_go::msg::WirelessController joystick_{};
     geometry_msgs::msg::Twist cmd_vel_{};
     bool have_low_state_ = false;
+
+    std::mutex fsm_key_mutex_;
+    std::deque<std::string> pending_fsm_keys_;
+    bool joystick_axes_active_ = false;
 
     std::mutex motion_mutex_;
     std::condition_variable motion_cv_;
