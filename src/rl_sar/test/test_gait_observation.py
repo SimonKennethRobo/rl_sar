@@ -85,7 +85,7 @@ def main():
         scope["_step_contact_targets"](env)
         saved_phase = env.gait_indices
         command_obs = command.numpy().ravel()
-        if bundle.get("omit_height", False):
+        if bundle.get("omit_height", False) and bundle.get("omit_height_command", True):
             command_obs = np.delete(command_obs, 5)
         expected = np.r_[command_obs * bundle["dog_commands_scale"], env.clock_inputs.numpy().ravel()]
         np.testing.assert_allclose(observed[2:], expected, atol=3e-5, rtol=1e-5)
