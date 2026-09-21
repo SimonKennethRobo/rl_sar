@@ -326,6 +326,26 @@ void RLRealGo2Ros2::GetState(RobotState<float> *state)
         joystick_axes_active_ = false;
     }
 
+    // In locomotion mode the wireless controller's right-stick vertical
+    // channel is the body-pitch command. Keep it separate from the velocity
+    // authority above so a neutral controller does not erase keyboard pose
+    // commands until the stick has actually been used. StateController()
+    // applies the configured limit_body_pitch clamp after this mapping.
+    const bool locomotion = fsm.current_state_ &&
+        fsm.current_state_->GetStateName() == "RLFSMStateRLLocomotion";
+    const bool joystick_pose_active = locomotion &&
+        std::fabs(joystick.ry) > kJoystickDeadzone;
+    if (joystick_pose_active)
+    {
+        control.body_pitch = joystick.ry;
+        joystick_pose_active_ = true;
+    }
+    else if (joystick_pose_active_)
+    {
+        control.body_pitch = 0.0F;
+        joystick_pose_active_ = false;
+    }
+
     for (int i = 0; i < 4; ++i) state->imu.quaternion[i] = low_state.imu_state.quaternion[i];
     for (int i = 0; i < 3; ++i) state->imu.gyroscope[i] = low_state.imu_state.gyroscope[i];
 
