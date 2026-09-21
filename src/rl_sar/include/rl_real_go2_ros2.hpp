@@ -138,6 +138,7 @@ private:
     std::mutex fsm_key_mutex_;
     std::deque<std::string> pending_fsm_keys_;
     bool joystick_axes_active_ = false;
+    bool joystick_pose_active_ = false;
 
     std::mutex motion_mutex_;
     std::condition_variable motion_cv_;
