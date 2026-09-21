@@ -286,7 +286,15 @@ std::vector<float> RL::ComputeObservation()
             // drift out of sync with the actual gait clock.
             std::vector<float> dog_commands(dog_command.begin(), dog_command.end());
             const auto& dog_commands_scale = this->params.Get<std::vector<float>>("dog_commands_scale");
-            if (this->params.Get<bool>("omit_height", false) && dog_commands.size() >= 6)
+            // The no-height route removes every height *measurement* from the
+            // frame, but the commanded height is known onboard without any
+            // estimator, so a bundle may keep it: omit_height_command false
+            // means slot 5 stays. Erasing it unconditionally would shift the
+            // whole gait block left by one and leave a zero where
+            // gait_duration belongs.
+            if (this->params.Get<bool>("omit_height", false) &&
+                this->params.Get<bool>("omit_height_command", true) &&
+                dog_commands.size() >= 6)
             {
                 dog_commands.erase(dog_commands.begin() + 5);
             }
