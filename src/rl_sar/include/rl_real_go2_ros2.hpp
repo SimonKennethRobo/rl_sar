@@ -19,6 +19,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <std_msgs/msg/float32_multi_array.hpp>
+#include <std_msgs/msg/float64_multi_array.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <trajectory_msgs/msg/joint_trajectory.hpp>
 #include <unitree_api/msg/request.hpp>
@@ -124,6 +125,8 @@ private:
     rclcpp::Subscription<trajectory_msgs::msg::JointTrajectory>::SharedPtr arm_command_subscriber_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr arm_mode_subscriber_;
     rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr base_command_subscriber_;
+    // [phase_rad, rate_rad_s] of the policy gait clock, for the gait-aware MPC.
+    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr gait_phase_publisher_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr fsm_key_subscriber_;
     rclcpp::Publisher<unitree_api::msg::Request>::SharedPtr motion_request_publisher_;
     rclcpp::Subscription<unitree_api::msg::Response>::SharedPtr motion_response_subscriber_;

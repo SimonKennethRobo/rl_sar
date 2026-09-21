@@ -290,6 +290,10 @@ public:
     // gait signal (RoboDuet's clock_inputs). Must be reset to 0 whenever the RL
     // state is (re-)entered so the phase matches training's reset behaviour.
     float gait_indices = 0.0f;
+    // Frequency [Hz] the clock advanced at on the latest policy step (0 while a
+    // dynamic-gait policy stands). Published with the phase so a consumer can
+    // extrapolate it between policy steps.
+    float gait_frequency_hz = 0.0f;
 
     // Motion tracking (for mimic/dance tasks)
     std::unique_ptr<MotionLoader> motion_loader;

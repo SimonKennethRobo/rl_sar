@@ -191,6 +191,8 @@ RLRealGo2Ros2::RLRealGo2Ros2(int argc, char **argv)
             "/go2_x5/arm/mode/target", rclcpp::QoS(10));
         arm_mode_state_publisher_ = create_publisher<std_msgs::msg::String>(
             "/go2_x5/arm/mode/state", rclcpp::QoS(1).transient_local());
+        gait_phase_publisher_ = create_publisher<std_msgs::msg::Float64MultiArray>(
+            "/go2_x5/base/gait_phase", rclcpp::SensorDataQoS());
         PublishArmMode(arm_mode_);
     }
 
@@ -456,6 +458,16 @@ void RLRealGo2Ros2::RunModel()
     obs.dof_pos = robot_state.motor_state.q;
     obs.dof_vel = robot_state.motor_state.dq;
     obs.actions = Forward();
+
+    if (gait_phase_publisher_)
+    {
+        // Phase of the clock the policy just observed. The gait-aware MPC needs
+        // it to align its predicted body oscillation with the real one.
+        std_msgs::msg::Float64MultiArray phase;
+        phase.data = {static_cast<double>(gait_indices) * 2.0 * M_PI,
+                      static_cast<double>(gait_frequency_hz) * 2.0 * M_PI};
+        gait_phase_publisher_->publish(phase);
+    }
 
     if (x5_mode_)
     {

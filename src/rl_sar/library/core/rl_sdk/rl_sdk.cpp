@@ -137,6 +137,7 @@ std::vector<float> RL::ComputeObservation()
             ? params.Get<float>("gait_frequency")
             : (dynamic_gait && standing ? 0.0f : params.Get<float>("gait_frequency"));
     }
+    this->gait_frequency_hz = effective_gait_frequency;
     const std::array<float, 5> response_command = {
         control.x, control.y, control.yaw, control.body_height, control.body_pitch};
     if (response_enabled_ && !response_initializing_ && episode_length_buf != response_last_step_
@@ -661,6 +662,7 @@ void RL::InitRL(std::string robot_config_path)
     servo_last_step_ = ~0ULL;
     servo_clock_.assign(4, 0.0f);
     gait_indices = 0.0f;
+    gait_frequency_hz = 0.0f;
 
     // Newer exports pack the frozen gait command slots into a single list,
     // [gait_frequency, footswing_height, stance_width, stance_length,
@@ -747,6 +749,7 @@ void RL::InitRLFromBundle(const std::string& config_path, const std::string& mod
     servo_last_step_ = ~0ULL;
     servo_clock_.assign(4, 0.0f);
     gait_indices = 0.0f;
+    gait_frequency_hz = 0.0f;
 
     const auto dog_commands_extra = this->params.Get<std::vector<float>>("dog_commands_extra");
     if (!dog_commands_extra.empty()) {

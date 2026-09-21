@@ -378,6 +378,7 @@ void RL_Sim::StartRosInterface()
     // MuJoCo ground truth is the simulator equivalent of the mocap-fused
     // world-frame estimate, so expose the same sample on the OCS2 topic.
     ros_odom_mocap_pub_ = ros_node_->create_publisher<nav_msgs::msg::Odometry>("/go2_x5/slam/odom_mocap", rclcpp::SensorDataQoS());
+    ros_gait_phase_pub_ = ros_node_->create_publisher<std_msgs::msg::Float64MultiArray>("/go2_x5/base/gait_phase", rclcpp::SensorDataQoS());
     std_msgs::msg::String mode; mode.data = ros_arm_mode_; ros_arm_mode_pub_->publish(mode);
     ros_thread_ = std::thread([this]() { rclcpp::spin(ros_node_); });
 }
@@ -890,6 +891,16 @@ void RL_Sim::RunModel()
         }
 
         this->obs.actions = this->Forward();
+#ifdef USE_MUJOCO_ROS2
+        if (ros_gait_phase_pub_)
+        {
+            // Phase of the clock the policy just observed, for the gait-aware MPC.
+            std_msgs::msg::Float64MultiArray phase;
+            phase.data = {static_cast<double>(this->gait_indices) * 2.0 * M_PI,
+                          static_cast<double>(this->gait_frequency_hz) * 2.0 * M_PI};
+            ros_gait_phase_pub_->publish(phase);
+        }
+#endif
         // Policies may drive fewer joints than the robot has (RoboDuet's dog
         // policy outputs 12 actions for an 18-DoF robot). Zero-pad so every
         // downstream num_of_dofs-wide loop stays in bounds; the padded joints
