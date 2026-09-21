@@ -183,6 +183,8 @@ if(EXISTS "${ONNX_RUNTIME_DIR}/include" AND EXISTS "${ONNX_RUNTIME_DIR}/lib" AND
         message(WARNING "ONNX Runtime library not found")
         set(USE_ONNX "OFF")
     endif()
+elseif(IS_JETSON)
+    message(STATUS "ONNX Runtime disabled on Jetson; using LibTorch")
 else()
     message(WARNING "ONNX Runtime not found. Please run: bash download_inference_runtime.sh onnx")
 endif()

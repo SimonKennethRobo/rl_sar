@@ -181,7 +181,7 @@ RLRealGo2Ros2::RLRealGo2Ros2(int argc, char **argv)
             [this](const std_msgs::msg::String::SharedPtr msg) { ArmModeCallback(msg); });
         fsm_key_subscriber_ = create_subscription<std_msgs::msg::String>(
             "/go2_x5/fsm/key", rclcpp::QoS(10),
-            [this](const std_msgs::msg::String::SharedPtr msg) { InjectKey(msg->data); });
+            [this](const std_msgs::msg::String::SharedPtr msg) { QueueFsmKey(msg->data); });
         base_command_subscriber_ = create_subscription<std_msgs::msg::Float32MultiArray>(
             "/go2_x5/base/command", rclcpp::QoS(10),
             [this](const std_msgs::msg::Float32MultiArray::SharedPtr msg) { BaseCommandCallback(msg); });
@@ -303,9 +303,28 @@ void RLRealGo2Ros2::GetState(RobotState<float> *state)
     if (keys.components.R1 && keys.components.right) control.SetGamepad(Input::Gamepad::RB_DPadRight);
     if (keys.components.L1 && keys.components.R1) control.SetGamepad(Input::Gamepad::LB_RB);
 
-    control.x = joystick.ly;
-    control.y = -joystick.lx;
-    control.yaw = -joystick.rx;
+    // A neutral wireless controller is published continuously by both the
+    // robot and the HIL bridge. Do not let those zeros erase persistent
+    // keyboard commands on every control tick. Once a real stick movement has
+    // taken authority, returning the sticks to centre clears the command once.
+    constexpr float kJoystickDeadzone = 0.05F;
+    const bool joystick_active = std::fabs(joystick.ly) > kJoystickDeadzone ||
+                                 std::fabs(joystick.lx) > kJoystickDeadzone ||
+                                 std::fabs(joystick.rx) > kJoystickDeadzone;
+    if (joystick_active)
+    {
+        control.x = joystick.ly;
+        control.y = -joystick.lx;
+        control.yaw = -joystick.rx;
+        joystick_axes_active_ = true;
+    }
+    else if (joystick_axes_active_)
+    {
+        control.x = 0.0F;
+        control.y = 0.0F;
+        control.yaw = 0.0F;
+        joystick_axes_active_ = false;
+    }
 
     for (int i = 0; i < 4; ++i) state->imu.quaternion[i] = low_state.imu_state.quaternion[i];
     for (int i = 0; i < 3; ++i) state->imu.gyroscope[i] = low_state.imu_state.gyroscope[i];
@@ -354,6 +373,7 @@ void RLRealGo2Ros2::SetCommand(const RobotCommand<float> *command)
 void RLRealGo2Ros2::RobotControl()
 {
     GetState(&robot_state);
+    ApplyNextFsmKey();
     if (x5_mode_)
     {
         UpdateArmModeFromInput();
@@ -594,7 +614,7 @@ void RLRealGo2Ros2::ArmModeCallback(const std_msgs::msg::String::SharedPtr msg)
             arm_command_time_ = std::chrono::steady_clock::now();
         }
         arm_mode_ = mode;
-        arm_mode_display = mode;
+        this->arm_mode_display = mode;
     }
     if (mode == "DAMPING") ClearExternalArmTarget();
     PublishArmMode(mode);
@@ -613,6 +633,27 @@ void RLRealGo2Ros2::ArmModeCallback(const std_msgs::msg::String::SharedPtr msg)
         fsm.RequestStateChange("RLFSMStateOCS2Manip");
     }
 #endif
+}
+
+void RLRealGo2Ros2::QueueFsmKey(const std::string &key)
+{
+    std::lock_guard<std::mutex> lock(fsm_key_mutex_);
+    // Bound the queue so a disconnected/lagging controller cannot replay an
+    // arbitrarily old burst of commands after the control loop recovers.
+    if (pending_fsm_keys_.size() >= 32) pending_fsm_keys_.pop_front();
+    pending_fsm_keys_.push_back(key);
+}
+
+void RLRealGo2Ros2::ApplyNextFsmKey()
+{
+    std::string key;
+    {
+        std::lock_guard<std::mutex> lock(fsm_key_mutex_);
+        if (pending_fsm_keys_.empty()) return;
+        key = std::move(pending_fsm_keys_.front());
+        pending_fsm_keys_.pop_front();
+    }
+    InjectKey(key);
 }
 
 void RLRealGo2Ros2::BaseCommandCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg)
