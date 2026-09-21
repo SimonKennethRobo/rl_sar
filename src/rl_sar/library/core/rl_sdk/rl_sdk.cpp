@@ -567,7 +567,15 @@ std::vector<float> RL::ComputeObservation()
     if (this->params.Has("num_observations"))
     {
         const int expected = this->params.Get<int>("num_observations");
-        if (static_cast<int>(obs.size()) != expected)
+        if (static_cast<int>(obs.size()) < expected)
+        {
+            // Some older X5 exports declare the full observation width while
+            // omitting an optional external-estimator block during startup.
+            // Keep the policy input shape stable; the live block is filled as
+            // soon as its ROS topic becomes available.
+            obs.resize(static_cast<size_t>(expected), 0.0F);
+        }
+        else if (static_cast<int>(obs.size()) > expected)
         {
             throw std::runtime_error(
                 "Observation width mismatch: built " + std::to_string(obs.size()) +
