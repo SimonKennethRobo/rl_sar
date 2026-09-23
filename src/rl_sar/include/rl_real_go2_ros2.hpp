@@ -166,6 +166,7 @@ private:
     bool base_command_seen_ = false;
     bool base_driven_ = false;
     std::string last_published_arm_mode_;
+    std::string last_input_arm_mode_;
     SteadyTime last_external_obs_warning_{};
     bool odometry_fault_latched_ = false;
 };

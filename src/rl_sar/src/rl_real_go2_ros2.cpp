@@ -807,12 +807,16 @@ void RLRealGo2Ros2::UpdateArmModeFromInput()
         mode = "DAMPING";
     else if (control.current_keyboard == Input::Keyboard::P || control.current_gamepad == Input::Gamepad::LB_X)
         mode = "DAMPING";
-    if (!mode.empty())
+    // Held buttons and ClearInput()'s sticky last_keyboard repeat the same
+    // input every tick; forward only edges, otherwise the ARX driver queues a
+    // blocking reset_to_home() per tick.
+    const bool edge = mode != last_input_arm_mode_;
+    last_input_arm_mode_ = mode;
+    if (!mode.empty() && edge)
     {
         std_msgs::msg::String msg;
         msg.data = mode;
         ArmModeCallback(std::make_shared<std_msgs::msg::String>(msg));
-
     }
 }
 
