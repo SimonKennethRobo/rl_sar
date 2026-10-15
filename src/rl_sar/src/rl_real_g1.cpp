@@ -6,6 +6,7 @@
 #include "rl_real_g1.hpp"
 #include "fsm_g1_23dof_duet.hpp"
 #include <fstream>
+#include "g1_arm_dds.hpp"
 
 RL_Real::RL_Real(int argc, char **argv)
 {
@@ -70,6 +71,8 @@ RL_Real::RL_Real(int argc, char **argv)
     this->imutorso_subscriber.reset(new ChannelSubscriber<IMUState_>(HG_IMU_TORSO));
     this->imutorso_subscriber->InitChannel(std::bind(&RL_Real::ImuTorsoHandler, this, std::placeholders::_1), 1);
 
+    SubscribeArmDDS(*this);
+
     // loop
     this->loop_keyboard = std::make_shared<LoopFunc>("loop_keyboard", 0.05, std::bind(&RL_Real::KeyboardInterface, this));
     this->loop_control = std::make_shared<LoopFunc>("loop_control", this->params.Get<float>("dt"), std::bind(&RL_Real::RobotControl, this));
@@ -117,51 +120,7 @@ void RL_Real::GetState(RobotState<float> *state)
     memcpy(this->remote_data_rx.buff, &unitree_low_state.wireless_remote()[0], 40);
     this->gamepad.update(this->remote_data_rx.RF_RX);
 
-    if (this->gamepad.A.pressed) this->control.SetGamepad(Input::Gamepad::A);
-    if (this->gamepad.B.pressed) this->control.SetGamepad(Input::Gamepad::B);
-    if (this->gamepad.X.pressed) this->control.SetGamepad(Input::Gamepad::X);
-    if (this->gamepad.Y.pressed) this->control.SetGamepad(Input::Gamepad::Y);
-    if (this->gamepad.R1.pressed) this->control.SetGamepad(Input::Gamepad::RB);
-    if (this->gamepad.L1.pressed) this->control.SetGamepad(Input::Gamepad::LB);
-    if (this->gamepad.F1.pressed) this->control.SetGamepad(Input::Gamepad::LStick);
-    if (this->gamepad.F2.pressed) this->control.SetGamepad(Input::Gamepad::RStick);
-    if (this->gamepad.up.pressed) this->control.SetGamepad(Input::Gamepad::DPadUp);
-    if (this->gamepad.down.pressed) this->control.SetGamepad(Input::Gamepad::DPadDown);
-    if (this->gamepad.left.pressed) this->control.SetGamepad(Input::Gamepad::DPadLeft);
-    if (this->gamepad.right.pressed) this->control.SetGamepad(Input::Gamepad::DPadRight);
-    if (this->gamepad.L1.pressed && this->gamepad.A.pressed) this->control.SetGamepad(Input::Gamepad::LB_A);
-    if (this->gamepad.L1.pressed && this->gamepad.B.pressed) this->control.SetGamepad(Input::Gamepad::LB_B);
-    if (this->gamepad.L1.pressed && this->gamepad.X.pressed) this->control.SetGamepad(Input::Gamepad::LB_X);
-    if (this->gamepad.L1.pressed && this->gamepad.Y.pressed) this->control.SetGamepad(Input::Gamepad::LB_Y);
-    if (this->gamepad.L1.pressed && this->gamepad.F1.pressed) this->control.SetGamepad(Input::Gamepad::LB_LStick);
-    if (this->gamepad.L1.pressed && this->gamepad.F2.pressed) this->control.SetGamepad(Input::Gamepad::LB_RStick);
-    if (this->gamepad.L1.pressed && this->gamepad.up.pressed) this->control.SetGamepad(Input::Gamepad::LB_DPadUp);
-    if (this->gamepad.L1.pressed && this->gamepad.down.pressed) this->control.SetGamepad(Input::Gamepad::LB_DPadDown);
-    if (this->gamepad.L1.pressed && this->gamepad.left.pressed) this->control.SetGamepad(Input::Gamepad::LB_DPadLeft);
-    if (this->gamepad.L1.pressed && this->gamepad.right.pressed) this->control.SetGamepad(Input::Gamepad::LB_DPadRight);
-    if (this->gamepad.R1.pressed && this->gamepad.A.pressed) this->control.SetGamepad(Input::Gamepad::RB_A);
-    if (this->gamepad.R1.pressed && this->gamepad.B.pressed) this->control.SetGamepad(Input::Gamepad::RB_B);
-    if (this->gamepad.R1.pressed && this->gamepad.X.pressed) this->control.SetGamepad(Input::Gamepad::RB_X);
-    if (this->gamepad.R1.pressed && this->gamepad.Y.pressed) this->control.SetGamepad(Input::Gamepad::RB_Y);
-    if (this->gamepad.R1.pressed && this->gamepad.F1.pressed) this->control.SetGamepad(Input::Gamepad::RB_LStick);
-    if (this->gamepad.R1.pressed && this->gamepad.F2.pressed) this->control.SetGamepad(Input::Gamepad::RB_RStick);
-    if (this->gamepad.R1.pressed && this->gamepad.up.pressed) this->control.SetGamepad(Input::Gamepad::RB_DPadUp);
-    if (this->gamepad.R1.pressed && this->gamepad.down.pressed) this->control.SetGamepad(Input::Gamepad::RB_DPadDown);
-    if (this->gamepad.R1.pressed && this->gamepad.left.pressed) this->control.SetGamepad(Input::Gamepad::RB_DPadLeft);
-    if (this->gamepad.R1.pressed && this->gamepad.right.pressed) this->control.SetGamepad(Input::Gamepad::RB_DPadRight);
-    if (this->gamepad.L1.pressed && this->gamepad.R1.pressed) this->control.SetGamepad(Input::Gamepad::LB_RB);
-
-    this->control.x = this->gamepad.ly;
-    this->control.y = -this->gamepad.lx;
-    this->control.yaw = -this->gamepad.rx;
-    // Assume Unitree ry is positive with the stick up: positive pitch means forward lean.
-    this->control.pitch = std::clamp(this->gamepad.ry, -1.f, 1.f);
-    this->control.roll = float(this->gamepad.R1.pressed) - float(this->gamepad.L1.pressed);
-    const float dt = this->params.Get<float>("dt");
-    const float waist_target = float(this->gamepad.L2.pressed) - float(this->gamepad.R2.pressed);
-    this->control.waist_yaw += std::clamp(waist_target - this->control.waist_yaw, -2.f * dt, 2.f * dt);
-    this->control.crouch = std::clamp(this->control.crouch + dt *
-        (float(this->gamepad.down.pressed) - float(this->gamepad.up.pressed)), 0.f, 1.f);
+    MapG1Remote(gamepad, control, params.Get<float>("dt"), robot_name == "g1_23dof_duet");
 
     state->imu.quaternion[0] = this->unitree_low_state.imu_state().quaternion()[0]; // w
     state->imu.quaternion[1] = this->unitree_low_state.imu_state().quaternion()[1]; // x

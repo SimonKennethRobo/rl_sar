@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Dedicated FSM for robot_lab DUET 23DOF policies (23 measured joints, 13 actor actions).
-// Arms are held at the training default pose through zero action scale.
+// Arms use the training default pose unless the external DDS reference is active.
 #ifndef FSM_G1_23DOF_DUET_HPP
 #define FSM_G1_23DOF_DUET_HPP
 #include "fsm_g1.hpp"
@@ -11,6 +11,11 @@ class Passive : public g1_fsm::RLFSMStatePassive
 {
 public:
     explicit Passive(RL* rl) : g1_fsm::RLFSMStatePassive(rl) {}
+    std::string CheckChange() override
+    {
+        if (rl.control.current_gamepad == Input::Gamepad::LB_X) return state_name_;
+        return g1_fsm::RLFSMStatePassive::CheckChange();
+    }
     std::vector<float> kd;
     void Enter() override
     {
@@ -83,12 +88,22 @@ class Policy : public RLFSMState
 {
 public:
     explicit Policy(RL* rl) : RLFSMState(*rl, "DuetPolicy") {}
+    float arm_weight = 0.f;
+    bool arm_active = false;
+    std::vector<float> arm_pose, arm_lower, arm_upper;
     bool loaded = false;
     long print_counter = 0;
     float last_posture[5] = {0.f, 0.f, 0.f, 0.f, 0.f};
     void Enter() override
     {
         rl.InitControl();
+        arm_weight = 0.f;
+        arm_active = false;
+        arm_pose = rl.params.Get<std::vector<float>>("default_dof_pos");
+        if (rl.params.Has("arm_dds_topic")) {
+            arm_lower = rl.params.Get<std::vector<float>>("arm_dds_limits_lower");
+            arm_upper = rl.params.Get<std::vector<float>>("arm_dds_limits_upper");
+        }
         loaded = false;
         rl.rl_init_done = false;
         rl.episode_length_buf = 0;
@@ -113,6 +128,30 @@ public:
         if (!loaded) return;
         rl.rl_init_done = true;
         RLControl();
+        if (rl.params.Has("arm_dds_topic")) {
+            std::array<float, 10> target;
+            float weight;
+            {
+                std::lock_guard<std::mutex> lock(rl.arm_dds.mutex);
+                target = rl.arm_dds.targets;
+                weight = std::chrono::steady_clock::now() - rl.arm_dds.received >
+                    std::chrono::milliseconds(500) ? 0.f : rl.arm_dds.weight;
+            }
+            const float dt = rl.params.Get<float>("dt");
+            arm_weight += std::clamp(weight - arm_weight, -dt, dt);
+            const bool active = arm_weight > 0.f;
+            if (active != arm_active) {
+                std::cout << "DDS arm control " << (active ? "active" : "inactive") << std::endl;
+                arm_active = active;
+            }
+            const auto defaults = rl.params.Get<std::vector<float>>("default_dof_pos");
+            for (int i = 0; i < 10; ++i) {
+                const float desired = defaults[13+i] + arm_weight *
+                    (std::clamp(target[i], arm_lower[i], arm_upper[i]) - defaults[13+i]);
+                arm_pose[13+i] += std::clamp(desired - arm_pose[13+i], -2.f*dt, 2.f*dt);
+                fsm_command->motor_command.q[13+i] = arm_pose[13+i];
+            }
+        }
         if (rl.params.Has("gait_posture_nominal") && ++print_counter % 500 == 0)
         {
             const float roll = rl.control.roll, pitch = rl.control.pitch, waist = rl.control.waist_yaw;
@@ -128,7 +167,12 @@ public:
         std::vector<float> unused;
         while (rl.output_dof_tau_queue.try_pop(unused)) {}
     }
-    void Exit() override { rl.rl_init_done = false; }
+    void Exit() override
+    {
+        rl.rl_init_done = false;
+        if (arm_active) std::cout << "DDS arm control inactive" << std::endl;
+        arm_active = false;
+    }
     std::string CheckChange() override
     {
         if (rl.control.current_keyboard == Input::Keyboard::P || rl.control.current_gamepad == Input::Gamepad::LB_X)

@@ -167,6 +167,58 @@ public:
     Button left;
 };
 
+inline void MapG1Remote(const Gamepad& gamepad, Control& control, float dt, bool duet)
+{
+    if (gamepad.A.pressed) control.SetGamepad(Input::Gamepad::A);
+    if (gamepad.B.pressed) control.SetGamepad(Input::Gamepad::B);
+    if (gamepad.X.pressed) control.SetGamepad(Input::Gamepad::X);
+    if (gamepad.Y.pressed) control.SetGamepad(Input::Gamepad::Y);
+    if (gamepad.R1.pressed) control.SetGamepad(Input::Gamepad::RB);
+    if (gamepad.L1.pressed) control.SetGamepad(Input::Gamepad::LB);
+    if (gamepad.F1.pressed) control.SetGamepad(Input::Gamepad::LStick);
+    if (gamepad.F2.pressed) control.SetGamepad(Input::Gamepad::RStick);
+    if (gamepad.up.pressed) control.SetGamepad(Input::Gamepad::DPadUp);
+    if (gamepad.down.pressed) control.SetGamepad(Input::Gamepad::DPadDown);
+    if (gamepad.left.pressed) control.SetGamepad(Input::Gamepad::DPadLeft);
+    if (gamepad.right.pressed) control.SetGamepad(Input::Gamepad::DPadRight);
+    if (gamepad.L1.pressed && gamepad.A.pressed) control.SetGamepad(Input::Gamepad::LB_A);
+    if (gamepad.L1.pressed && gamepad.B.pressed) control.SetGamepad(Input::Gamepad::LB_B);
+    if (gamepad.L1.pressed && gamepad.X.pressed) control.SetGamepad(Input::Gamepad::LB_X);
+    if (gamepad.L1.pressed && gamepad.Y.pressed) control.SetGamepad(Input::Gamepad::LB_Y);
+    if (gamepad.L1.pressed && gamepad.F1.pressed) control.SetGamepad(Input::Gamepad::LB_LStick);
+    if (gamepad.L1.pressed && gamepad.F2.pressed) control.SetGamepad(Input::Gamepad::LB_RStick);
+    if (gamepad.L1.pressed && gamepad.up.pressed) control.SetGamepad(Input::Gamepad::LB_DPadUp);
+    if (gamepad.L1.pressed && gamepad.down.pressed) control.SetGamepad(Input::Gamepad::LB_DPadDown);
+    if (gamepad.L1.pressed && gamepad.left.pressed) control.SetGamepad(Input::Gamepad::LB_DPadLeft);
+    if (gamepad.L1.pressed && gamepad.right.pressed) control.SetGamepad(Input::Gamepad::LB_DPadRight);
+    if (gamepad.R1.pressed && gamepad.A.pressed) control.SetGamepad(Input::Gamepad::RB_A);
+    if (gamepad.R1.pressed && gamepad.B.pressed) control.SetGamepad(Input::Gamepad::RB_B);
+    if (gamepad.R1.pressed && gamepad.X.pressed) control.SetGamepad(Input::Gamepad::RB_X);
+    if (gamepad.R1.pressed && gamepad.Y.pressed) control.SetGamepad(Input::Gamepad::RB_Y);
+    if (gamepad.R1.pressed && gamepad.F1.pressed) control.SetGamepad(Input::Gamepad::RB_LStick);
+    if (gamepad.R1.pressed && gamepad.F2.pressed) control.SetGamepad(Input::Gamepad::RB_RStick);
+    if (gamepad.R1.pressed && gamepad.up.pressed) control.SetGamepad(Input::Gamepad::RB_DPadUp);
+    if (gamepad.R1.pressed && gamepad.down.pressed) control.SetGamepad(Input::Gamepad::RB_DPadDown);
+    if (gamepad.R1.pressed && gamepad.left.pressed) control.SetGamepad(Input::Gamepad::RB_DPadLeft);
+    if (gamepad.R1.pressed && gamepad.right.pressed) control.SetGamepad(Input::Gamepad::RB_DPadRight);
+    if (gamepad.L1.pressed && gamepad.R1.pressed) control.SetGamepad(Input::Gamepad::LB_RB);
+
+    control.x = gamepad.ly;
+    control.y = -gamepad.lx;
+    control.yaw = -gamepad.rx;
+    // Assume Unitree ry is positive with the stick up: positive pitch means forward lean.
+    control.pitch = std::clamp(gamepad.ry, -1.f, 1.f);
+    const bool entering = duet && gamepad.R1.pressed && gamepad.up.pressed;
+    control.roll = entering ? 0.f : float(gamepad.R1.pressed) - float(gamepad.L1.pressed);
+    const float waist_target = float(gamepad.L2.pressed) - float(gamepad.R2.pressed);
+    control.waist_yaw += std::clamp(waist_target - control.waist_yaw, -2.f * dt, 2.f * dt);
+    control.crouch = std::clamp(control.crouch + dt *
+        (float(gamepad.down.pressed) - float(gamepad.up.pressed && !entering)), 0.f, 1.f);
+
+    if (duet && gamepad.start.pressed) control.SetGamepad(Input::Gamepad::RB_DPadUp);
+    if (duet && gamepad.select.pressed) control.SetGamepad(Input::Gamepad::LB_X);
+}
+
 enum class Mode {
     PR = 0,  // Series Control for Ptich/Roll Joints
     AB = 1   // Parallel Control for A/B Joints
