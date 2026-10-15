@@ -16,6 +16,8 @@
 #include <memory>
 #include <fstream>
 #include <mutex>
+#include <array>
+#include <chrono>
 
 #include <yaml-cpp/yaml.h>
 #include "fsm.hpp"
@@ -192,6 +194,16 @@ class RL
 public:
     RL() {};
     ~RL() {};
+
+    struct ArmDDS
+    {
+        std::mutex mutex;
+        std::array<float, 10> targets{};
+        float weight = 0.f;
+        std::chrono::steady_clock::time_point received{};
+    } arm_dds;
+    // Destroy subscriber before the callback data above.
+    std::shared_ptr<void> arm_dds_subscriber;
 
     YamlParams params;
     Observations<float> obs;

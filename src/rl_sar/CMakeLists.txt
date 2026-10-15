@@ -712,6 +712,13 @@ if(USE_MUJOCO)
         Threads::Threads mujoco_prebuilt glfw
     )
 
+    if(TARGET unitree_sdk2)
+        target_link_libraries(rl_sim_mujoco unitree_sdk2)
+        target_compile_definitions(rl_sim_mujoco PRIVATE USE_ARM_DDS)
+        set_target_properties(rl_sim_mujoco PROPERTIES
+            INSTALL_RPATH "${CMAKE_INSTALL_RPATH};${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_sdk2/thirdparty/lib/${ARCH_DIR}")
+    endif()
+
     # macOS specific frameworks and libraries
     if(SYSTEM_TYPE STREQUAL "Darwin")
         # OpenMP support
@@ -793,3 +800,10 @@ if(USE_MUJOCO)
     message(STATUS "MuJoCo: Enabled")
 endif()
 message(STATUS "========================================")
+
+if(TARGET unitree_sdk2)
+    add_executable(g1_arm_dds_pub tools/g1_arm_dds_pub.cpp)
+    target_link_libraries(g1_arm_dds_pub unitree_sdk2 Threads::Threads)
+    set_target_properties(g1_arm_dds_pub PROPERTIES
+        INSTALL_RPATH "${CMAKE_INSTALL_RPATH};${CMAKE_CURRENT_SOURCE_DIR}/library/thirdparty/robot_sdk/unitree/unitree_sdk2/thirdparty/lib/${ARCH_DIR}")
+endif()

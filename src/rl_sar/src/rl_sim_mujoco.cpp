@@ -5,6 +5,9 @@
 
 #include "rl_sim_mujoco.hpp"
 #include <atomic>
+#ifdef USE_ARM_DDS
+#include "g1_arm_dds.hpp"
+#endif
 
 static std::atomic<bool> gantry_active{true};
 static int gantry_body = -1;
@@ -134,6 +137,12 @@ RL_Sim::RL_Sim(int argc, char **argv)
 
     // read params from yaml
     this->ReadYaml(this->robot_name, "base.yaml");
+#ifdef USE_ARM_DDS
+    if (params.Has("arm_dds_topic")) {
+        unitree::robot::ChannelFactory::Instance()->Init(1, "lo");
+        SubscribeArmDDS(*this);
+    }
+#endif
 
     sim_dofs = params.Get<int>("num_of_dofs");
     sim_joint_mapping = params.Get<std::vector<int>>("joint_mapping");
@@ -313,6 +322,12 @@ void RL_Sim::RobotControl()
                   << " interval_peak_qvel=" << gantry_peak_qvel
                   << " interval_min_pelvis_z=" << gantry_min_pelvis_z
                   << " interval_peak_rope_N=" << gantry_peak_force << " state=" << fsm.current_state_->GetStateName();
+        if (params.Has("arm_dds_topic")) {
+            std::cout << " arm_q=";
+            for (int i=13; i<23; ++i) std::cout << robot_state.motor_state.q[i] << ",";
+            std::cout << " arm_cmd=";
+            for (int i=13; i<23; ++i) std::cout << robot_command.motor_command.q[i] << ",";
+        }
         for (int i = 0; i < mjNWARNING; ++i) std::cout << " warning[" << i << "]=" << mj_data->warning[i].number;
         std::cout << std::endl;
         gantry_peak_qvel = gantry_peak_force = 0.;
