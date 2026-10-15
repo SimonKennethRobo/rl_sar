@@ -118,6 +118,11 @@ struct Control
     float x = 0.0f;
     float y = 0.0f;
     float yaw = 0.0f;
+    // robot_lab gait/posture commands, normalized to [-1, 1] (scaled by the policy config).
+    float roll = 0.0f;
+    float pitch = 0.0f;
+    float waist_yaw = 0.0f;
+    float crouch = 0.0f; // 0 = top height, 1 = floor.
     bool navigation_mode = false;
 
     void SetKeyboard(Input::Keyboard keyboad)

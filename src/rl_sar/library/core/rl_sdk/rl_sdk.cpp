@@ -165,6 +165,55 @@ std::vector<float> RL::ComputeObservation()
             std::vector<float> phase_vec = {phase};
             obs_list.push_back(phase_vec);
         }
+        else if (observation == "robot_lab/gated_phase")
+        {
+            // robot_lab DUET gait clock: [sin, cos] of episode time, zeroed while the command is "standing".
+            // With phase_yaw_threshold: moving = |xy| > linear OR |yaw| > yaw; otherwise |xy| + |yaw| > linear.
+            std::vector<float> command = this->obs.commands * this->params.Get<std::vector<float>>("commands_scale");
+            const float linear = std::sqrt(command[0] * command[0] + command[1] * command[1]);
+            const float yaw = std::abs(command[2]);
+            const float linear_threshold = this->params.Get<float>("phase_linear_threshold");
+            const bool moving = this->params.Has("phase_yaw_threshold")
+                ? (linear > linear_threshold || yaw > this->params.Get<float>("phase_yaw_threshold"))
+                : (linear + yaw > linear_threshold);
+            const float period = this->params.Get<float>("phase_period");
+            const float time = this->episode_length_buf * this->params.Get<float>("dt") * this->params.Get<int>("decimation");
+            const float angle = 2.0f * static_cast<float>(M_PI) * std::fmod(time, period) / period;
+            obs_list.push_back(moving ? std::vector<float>{std::sin(angle), std::cos(angle)} : std::vector<float>{0.0f, 0.0f});
+        }
+        else if (observation == "robot_lab/height_command")
+        {
+            float h = this->params.Get<float>("height_command");
+            if (this->params.Has("height_floor"))
+            {
+                h -= this->control.crouch * (h - this->params.Get<float>("height_floor"));
+                const auto command = this->obs.commands * this->params.Get<std::vector<float>>("commands_scale");
+                const float linear = std::hypot(command[0], command[1]), yaw = std::abs(command[2]);
+                const float threshold = this->params.Get<float>("phase_linear_threshold");
+                const bool moving = this->params.Has("phase_yaw_threshold")
+                    ? (linear > threshold || yaw > this->params.Get<float>("phase_yaw_threshold"))
+                    : (linear + yaw > threshold);
+                if (moving) h = std::max(h, this->params.Get<float>("height_walk_min"));
+            }
+            obs_list.push_back({h});
+        }
+        else if (observation == "robot_lab/gait_posture_command")
+        {
+            // robot_lab E-011 GaitPostureCommand layout: step frequency [Hz], step width [m],
+            // torso roll, torso pitch, relative waist yaw [rad]. Frequency/width stay nominal.
+            const std::vector<float> nominal = this->params.Get<std::vector<float>>("gait_posture_nominal");
+            const std::vector<float> low = this->params.Get<std::vector<float>>("gait_posture_low");
+            const std::vector<float> high = this->params.Get<std::vector<float>>("gait_posture_high");
+            auto scaled = [](float u, float lo, float hi, float mid)
+            {
+                u = std::max(-1.0f, std::min(1.0f, u));
+                return u >= 0.0f ? mid + u * (hi - mid) : mid + u * (mid - lo);
+            };
+            obs_list.push_back({nominal[0], nominal[1],
+                                scaled(this->control.roll, low[2], high[2], nominal[2]),
+                                scaled(this->control.pitch, low[3], high[3], nominal[3]),
+                                scaled(this->control.waist_yaw, low[4], high[4], nominal[4])});
+        }
     }
 
     this->obs_dims.clear();
@@ -212,6 +261,10 @@ void RL::InitControl()
     this->control.x = 0.0f;
     this->control.y = 0.0f;
     this->control.yaw = 0.0f;
+    this->control.roll = 0.0f;
+    this->control.pitch = 0.0f;
+    this->control.waist_yaw = 0.0f;
+    this->control.crouch = 0.0f;
 }
 
 void RL::InitJointNum(size_t num_joints)

@@ -84,6 +84,17 @@ RL_Sim::RL_Sim(int argc, char **argv)
     // read params from yaml
     this->ReadYaml(this->robot_name, "base.yaml");
 
+    // Optional nominal reset pose for dedicated simulation configurations.
+    if (this->params.Has("initial_keyframe"))
+    {
+        const std::lock_guard<std::recursive_mutex> lock(sim->mtx);
+        int key = this->params.Get<int>("initial_keyframe");
+        if (key < 0 || key >= this->mj_model->nkey)
+            throw std::runtime_error("initial_keyframe is outside the MuJoCo model");
+        mj_resetDataKeyframe(this->mj_model, this->mj_data, key);
+        mj_forward(this->mj_model, this->mj_data);
+    }
+
     // auto load FSM by robot_name
     if (FSMManager::GetInstance().IsTypeSupported(this->robot_name))
     {
@@ -192,6 +203,8 @@ void RL_Sim::RobotControl()
     // Lock the sim mutex once for the entire control cycle to prevent race conditions
     const std::lock_guard<std::recursive_mutex> lock(sim->mtx);
 
+    // Keep the dedicated arm demonstration frozen when the MuJoCo UI is paused too.
+    if (this->robot_name == "g1_23dof_uhold" || this->robot_name == "g1_23dof_duet") this->simulation_running = sim->run != 0;
     this->GetState(&this->robot_state);
 
     this->StateController(&this->robot_state, &this->robot_command);
@@ -200,8 +213,18 @@ void RL_Sim::RobotControl()
     {
         if (this->mj_model && this->mj_data)
         {
-            mj_resetData(this->mj_model, this->mj_data);
+            if (this->params.Has("initial_keyframe"))
+                mj_resetDataKeyframe(this->mj_model, this->mj_data, this->params.Get<int>("initial_keyframe"));
+            else
+                mj_resetData(this->mj_model, this->mj_data);
             mj_forward(this->mj_model, this->mj_data);
+            if (this->params.Has("reset_fsm_state"))
+            {
+                this->rl_init_done = false;
+                this->InitControl();
+                this->GetState(&this->robot_state);
+                this->fsm.RequestStateChange(this->params.Get<std::string>("reset_fsm_state"));
+            }
         }
     }
     if (this->control.current_keyboard == Input::Keyboard::Enter || this->control.current_gamepad == Input::Gamepad::RB_X)
@@ -325,6 +348,20 @@ void RL_Sim::GetSysJoystick()
         this->control.yaw = 0.0f;
         this->sys_js_active = false;
     }
+
+    // robot_lab gait/posture commands (xpad layout: axis 4 right stick Y, axes 2/5 LT/RT resting at -max,
+    // buttons 4/5 LB/RB). Right stick up = pitch forward; RB/LB = roll right/left; LT/RT = waist yaw left/right.
+    if (this->sys_js)
+    {
+        const float max_value = float(this->sys_js_max_value);
+        auto trigger = [&](int axis) { return std::max(0.0f, std::min(1.0f, (float(this->sys_js_axis[axis]) + max_value) / (2.0f * max_value))); };
+        this->control.pitch = -float(this->sys_js_axis[4]) / max_value;
+        this->control.roll = (this->sys_js_button[5].pressed ? 1.0f : 0.0f) - (this->sys_js_button[4].pressed ? 1.0f : 0.0f);
+        this->control.waist_yaw = trigger(2) - trigger(5);
+        if (this->sys_js_axis[7] < 0) this->control.crouch -= 0.01f;
+        if (this->sys_js_axis[7] > 0) this->control.crouch += 0.01f;
+        this->control.crouch = std::clamp(this->control.crouch, 0.0f, 1.0f);
+    }
 }
 
 void RL_Sim::RunModel()
@@ -393,6 +430,8 @@ std::vector<float> RL_Sim::Forward()
     std::vector<float> actions;
     if (this->params.Get<std::vector<int>>("observations_history").size() != 0)
     {
+        if (this->episode_length_buf == 1 && this->params.Get<bool>("history_fill_first", false))
+            this->history_obs_buf.reset({0}, clamped_obs);
         this->history_obs_buf.insert(clamped_obs);
         this->history_obs = this->history_obs_buf.get_obs_vec(this->params.Get<std::vector<int>>("observations_history"));
         actions = this->model->forward({this->history_obs});

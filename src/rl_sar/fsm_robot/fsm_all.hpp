@@ -11,6 +11,8 @@
 #include "fsm_b2w.hpp"
 #include "fsm_d1.hpp"
 #include "fsm_g1.hpp"
+#include "fsm_g1_23dof_uhold.hpp"
+#include "fsm_g1_23dof_duet.hpp"
 #include "fsm_go2.hpp"
 #include "fsm_go2w.hpp"
 #include "fsm_gr1t1.hpp"
