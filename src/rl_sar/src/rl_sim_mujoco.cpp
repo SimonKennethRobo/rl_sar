@@ -4,6 +4,57 @@
  */
 
 #include "rl_sim_mujoco.hpp"
+#include <atomic>
+
+static std::atomic<bool> gantry_active{true};
+static int gantry_body = -1;
+static mjtNum gantry_anchor[3];
+static double gantry_initial_height, gantry_initial_pelvis_height, gantry_target_height, gantry_length, gantry_force = 0.;
+static double gantry_k, gantry_c, gantry_peak_qvel = 0.;
+static double gantry_min_pelvis_z = 1e9, gantry_peak_force = 0.;
+static const mjtNum gantry_attachment[3] = {-0.11, 0., 0.30};
+
+// Start with relaxed ankles so the unpowered feet do not take 10 s to droop.
+static void ResetGantryHang(const mjModel* model, mjData* data)
+{
+    gantry_anchor[2] = gantry_target_height = gantry_initial_height;
+    gantry_active.store(true);
+    data->qpos[2] = gantry_initial_pelvis_height;
+    for (const char* name : {"left_ankle_pitch_joint", "right_ankle_pitch_joint"})
+        data->qpos[model->jnt_qposadr[mj_name2id(model, mjOBJ_JOINT, name)]] = 0.5;
+}
+
+// Pull-only back-handle rope. xfrc_applied torque is about the body's COM.
+static void ApplyGantry(const mjModel* model, mjData* data)
+{
+    for (int i = 6; i < model->nv; ++i)
+        gantry_peak_qvel = std::max(gantry_peak_qvel, std::abs(data->qvel[i]));
+    gantry_min_pelvis_z = std::min(gantry_min_pelvis_z, data->qpos[2]);
+    mjtNum* wrench = data->xfrc_applied + 6 * gantry_body;
+    mju_zero(wrench, 6);
+    gantry_force = 0.;
+    if (!gantry_active.load()) return;
+    const double dz = std::clamp(gantry_target_height - gantry_anchor[2],
+                                 -0.1 * model->opt.timestep, 0.1 * model->opt.timestep);
+    gantry_anchor[2] += dz;
+    mjtNum point[3], offset[3], direction[3], velocity[6], point_velocity[3];
+    mju_mulMatVec(offset, data->xmat + 9 * gantry_body, gantry_attachment, 3, 3);
+    mju_add3(point, data->xpos + 3 * gantry_body, offset);
+    mju_sub3(direction, gantry_anchor, point);
+    const double length = mju_normalize3(direction);
+    if (length <= gantry_length) return;
+    mj_objectVelocity(model, data, mjOBJ_BODY, gantry_body, velocity, 0);
+    mju_sub3(offset, point, data->xipos + 3 * gantry_body);
+    mju_cross(point_velocity, velocity, offset);
+    mju_addTo3(point_velocity, velocity + 3);
+    // dl/dt = (v(A)-v(P)).n. Clamp so damping never pushes.
+    gantry_force = std::max(0., gantry_k * (length - gantry_length)
+                                  + gantry_c * (dz / model->opt.timestep * direction[2]
+                                                - mju_dot3(point_velocity, direction)));
+    gantry_peak_force = std::max(gantry_peak_force, gantry_force);
+    mju_scl3(wrench, direction, gantry_force);
+    mju_cross(wrench + 3, offset, wrench);
+}
 
 RL_Sim* RL_Sim::instance = nullptr;
 
@@ -84,6 +135,9 @@ RL_Sim::RL_Sim(int argc, char **argv)
     // read params from yaml
     this->ReadYaml(this->robot_name, "base.yaml");
 
+    sim_dofs = params.Get<int>("num_of_dofs");
+    sim_joint_mapping = params.Get<std::vector<int>>("joint_mapping");
+
     // Optional nominal reset pose for dedicated simulation configurations.
     if (this->params.Has("initial_keyframe"))
     {
@@ -93,6 +147,22 @@ RL_Sim::RL_Sim(int argc, char **argv)
             throw std::runtime_error("initial_keyframe is outside the MuJoCo model");
         mj_resetDataKeyframe(this->mj_model, this->mj_data, key);
         mj_forward(this->mj_model, this->mj_data);
+    }
+
+    if (this->params.Has("sim_gantry_height"))
+    {
+        const std::lock_guard<std::recursive_mutex> lock(sim->mtx);
+        gantry_body = mj_name2id(mj_model, mjOBJ_BODY, "torso_link");
+        gantry_anchor[0] = mj_data->qpos[0];
+        gantry_anchor[1] = mj_data->qpos[1];
+        gantry_initial_height = params.Get<float>("sim_gantry_height");
+        gantry_initial_pelvis_height = params.Get<float>("sim_gantry_initial_pelvis_height");
+        gantry_length = params.Get<float>("sim_gantry_length");
+        gantry_k = params.Get<float>("sim_gantry_stiffness");
+        gantry_c = params.Get<float>("sim_gantry_damping");
+        ResetGantryHang(mj_model, mj_data);
+        mj_forward(mj_model, mj_data);
+        mjcb_control = ApplyGantry;
     }
 
     // auto load FSM by robot_name
@@ -110,7 +180,7 @@ RL_Sim::RL_Sim(int argc, char **argv)
     }
 
     // init robot
-    this->InitJointNum(this->params.Get<int>("num_of_dofs"));
+    this->InitJointNum(sim_dofs);
     this->InitOutputs();
     this->InitControl();
 
@@ -130,8 +200,8 @@ RL_Sim::RL_Sim(int argc, char **argv)
 
 #ifdef PLOT
     this->plot_t = std::vector<int>(this->plot_size, 0);
-    this->plot_real_joint_pos.resize(this->params.Get<int>("num_of_dofs"));
-    this->plot_target_joint_pos.resize(this->params.Get<int>("num_of_dofs"));
+    this->plot_real_joint_pos.resize(sim_dofs);
+    this->plot_target_joint_pos.resize(sim_dofs);
     for (auto &vector : this->plot_real_joint_pos) { vector = std::vector<float>(this->plot_size, 0); }
     for (auto &vector : this->plot_target_joint_pos) { vector = std::vector<float>(this->plot_size, 0); }
     this->loop_plot = std::make_shared<LoopFunc>("loop_plot", 0.001, std::bind(&RL_Sim::Plot, this));
@@ -166,20 +236,20 @@ void RL_Sim::GetState(RobotState<float> *state)
 {
     if (mj_data)
     {
-        state->imu.quaternion[0] = mj_data->sensordata[3 * this->params.Get<int>("num_of_dofs") + 0];
-        state->imu.quaternion[1] = mj_data->sensordata[3 * this->params.Get<int>("num_of_dofs") + 1];
-        state->imu.quaternion[2] = mj_data->sensordata[3 * this->params.Get<int>("num_of_dofs") + 2];
-        state->imu.quaternion[3] = mj_data->sensordata[3 * this->params.Get<int>("num_of_dofs") + 3];
+        state->imu.quaternion[0] = mj_data->sensordata[3 * sim_dofs + 0];
+        state->imu.quaternion[1] = mj_data->sensordata[3 * sim_dofs + 1];
+        state->imu.quaternion[2] = mj_data->sensordata[3 * sim_dofs + 2];
+        state->imu.quaternion[3] = mj_data->sensordata[3 * sim_dofs + 3];
 
-        state->imu.gyroscope[0] = mj_data->sensordata[3 * this->params.Get<int>("num_of_dofs") + 4];
-        state->imu.gyroscope[1] = mj_data->sensordata[3 * this->params.Get<int>("num_of_dofs") + 5];
-        state->imu.gyroscope[2] = mj_data->sensordata[3 * this->params.Get<int>("num_of_dofs") + 6];
+        state->imu.gyroscope[0] = mj_data->sensordata[3 * sim_dofs + 4];
+        state->imu.gyroscope[1] = mj_data->sensordata[3 * sim_dofs + 5];
+        state->imu.gyroscope[2] = mj_data->sensordata[3 * sim_dofs + 6];
 
-        for (int i = 0; i < this->params.Get<int>("num_of_dofs"); ++i)
+        for (int i = 0; i < sim_dofs; ++i)
         {
-            state->motor_state.q[i] = mj_data->sensordata[this->params.Get<std::vector<int>>("joint_mapping")[i]];
-            state->motor_state.dq[i] = mj_data->sensordata[this->params.Get<std::vector<int>>("joint_mapping")[i] + this->params.Get<int>("num_of_dofs")];
-            state->motor_state.tau_est[i] = mj_data->sensordata[this->params.Get<std::vector<int>>("joint_mapping")[i] + 2 * this->params.Get<int>("num_of_dofs")];
+            state->motor_state.q[i] = mj_data->sensordata[sim_joint_mapping[i]];
+            state->motor_state.dq[i] = mj_data->sensordata[sim_joint_mapping[i] + sim_dofs];
+            state->motor_state.tau_est[i] = mj_data->sensordata[sim_joint_mapping[i] + 2 * sim_dofs];
         }
     }
 }
@@ -188,12 +258,12 @@ void RL_Sim::SetCommand(const RobotCommand<float> *command)
 {
     if (mj_data)
     {
-        for (int i = 0; i < this->params.Get<int>("num_of_dofs"); ++i)
+        for (int i = 0; i < sim_dofs; ++i)
         {
-            mj_data->ctrl[this->params.Get<std::vector<int>>("joint_mapping")[i]] =
+            mj_data->ctrl[sim_joint_mapping[i]] =
                 command->motor_command.tau[i] +
-                command->motor_command.kp[i] * (command->motor_command.q[i] - mj_data->sensordata[this->params.Get<std::vector<int>>("joint_mapping")[i]]) +
-                command->motor_command.kd[i] * (command->motor_command.dq[i] - mj_data->sensordata[this->params.Get<std::vector<int>>("joint_mapping")[i] + this->params.Get<int>("num_of_dofs")]);
+                command->motor_command.kp[i] * (command->motor_command.q[i] - mj_data->sensordata[sim_joint_mapping[i]]) +
+                command->motor_command.kd[i] * (command->motor_command.dq[i] - mj_data->sensordata[sim_joint_mapping[i] + sim_dofs]);
         }
     }
 }
@@ -205,6 +275,49 @@ void RL_Sim::RobotControl()
 
     // Keep the dedicated arm demonstration frozen when the MuJoCo UI is paused too.
     if (this->robot_name == "g1_23dof_uhold" || this->robot_name == "g1_23dof_duet") this->simulation_running = sim->run != 0;
+    static const bool diag = std::getenv("RL_SAR_SIM_DIAG") && std::string(std::getenv("RL_SAR_SIM_DIAG")) == "1";
+    static auto last_diag = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    if (diag && now - last_diag >= std::chrono::seconds(1))
+    {
+        last_diag = now;
+        double vmax = 0;
+        for (int i = 6; i < mj_model->nv; ++i) vmax = std::max(vmax, std::abs(mj_data->qvel[i]));
+        double feet = 1e9;
+        for (int g = 0; g < mj_model->ngeom; ++g)
+        {
+            const char* name = mj_id2name(mj_model, mjOBJ_GEOM, g);
+            if (name && (std::string(name).find("left_foot") == 0 || std::string(name).find("right_foot") == 0))
+                feet = std::min(feet, mj_data->geom_xpos[3*g+2] - mj_model->geom_size[3*g]
+                    - mj_model->geom_size[3*g+1] * std::abs(mj_data->geom_xmat[9*g+8]));
+        }
+        double foot_load = 0.;
+        const int floor = mj_name2id(mj_model, mjOBJ_GEOM, "floor");
+        for (int c = 0; c < mj_data->ncon; ++c)
+        {
+            const auto& contact = mj_data->contact[c];
+            if (contact.geom[0] != floor && contact.geom[1] != floor) continue;
+            const int other = contact.geom[0] == floor ? contact.geom[1] : contact.geom[0];
+            const char* name = mj_id2name(mj_model, mjOBJ_GEOM, other);
+            if (name && (std::string(name).find("left_foot") == 0 || std::string(name).find("right_foot") == 0))
+            {
+                mjtNum force[6];
+                mj_contactForce(mj_model, mj_data, c, force);
+                foot_load += force[0];
+            }
+        }
+        std::cout << std::defaultfloat << std::setprecision(6) << "SIM_DIAG t=" << mj_data->time << " z=" << mj_data->xpos[3 * mj_name2id(mj_model, mjOBJ_BODY, "pelvis") + 2]
+                  << " foot_clearance=" << feet << " foot_load_N=" << foot_load
+                  << " rope_N=" << (gantry_active.load() ? gantry_force : 0.)
+                  << " anchor_z=" << gantry_anchor[2] << " max_joint_qvel=" << vmax
+                  << " interval_peak_qvel=" << gantry_peak_qvel
+                  << " interval_min_pelvis_z=" << gantry_min_pelvis_z
+                  << " interval_peak_rope_N=" << gantry_peak_force << " state=" << fsm.current_state_->GetStateName();
+        for (int i = 0; i < mjNWARNING; ++i) std::cout << " warning[" << i << "]=" << mj_data->warning[i].number;
+        std::cout << std::endl;
+        gantry_peak_qvel = gantry_peak_force = 0.;
+        gantry_min_pelvis_z = mj_data->qpos[2];
+    }
     this->GetState(&this->robot_state);
 
     this->StateController(&this->robot_state, &this->robot_command);
@@ -217,6 +330,10 @@ void RL_Sim::RobotControl()
                 mj_resetDataKeyframe(this->mj_model, this->mj_data, this->params.Get<int>("initial_keyframe"));
             else
                 mj_resetData(this->mj_model, this->mj_data);
+            if (gantry_body >= 0)
+            {
+                ResetGantryHang(mj_model, mj_data);
+            }
             mj_forward(this->mj_model, this->mj_data);
             if (this->params.Has("reset_fsm_state"))
             {
@@ -242,8 +359,24 @@ void RL_Sim::RobotControl()
         simulation_running = !simulation_running;
     }
 
+    if (gantry_body >= 0)
+    {
+        const bool active = this->fsm.current_state_->GetStateName() != "DuetPolicy";
+        gantry_active.store(active);
+        // Keyboard events move 5 mm (20 Hz repeat = 0.1 m/s); xpad runs at 100 Hz.
+        double dz = 0.;
+        if (active && simulation_running)
+        {
+            if (control.current_keyboard == Input::Keyboard::G) dz = -0.005;
+            if (control.current_keyboard == Input::Keyboard::H) dz = 0.005;
+        }
+        if (dz != 0.)
+        {
+            gantry_target_height += dz;
+            std::cout << "Gantry anchor z=" << gantry_target_height << " m" << std::endl;
+        }
+    }
     this->control.ClearInput();
-
     this->SetCommand(&this->robot_command);
 }
 
@@ -349,6 +482,18 @@ void RL_Sim::GetSysJoystick()
         this->sys_js_active = false;
     }
 
+    if (gantry_body >= 0 && sys_js_axis[7] != 0)
+    {
+        const std::lock_guard<std::recursive_mutex> lock(sim->mtx);
+        if (gantry_active.load() && sim->run)
+        {
+            gantry_target_height += sys_js_axis[7] > 0 ? -0.001 : 0.001;
+            static int print_count = 0;
+            if (++print_count % 10 == 0)
+                std::cout << "Gantry anchor z=" << gantry_target_height << " m" << std::endl;
+        }
+    }
+
     // robot_lab gait/posture commands (xpad layout: axis 4 right stick Y, axes 2/5 LT/RT resting at -max,
     // buttons 4/5 LB/RB). Right stick up = pitch forward; RB/LB = roll right/left; LT/RT = waist yaw left/right.
     if (this->sys_js)
@@ -404,8 +549,8 @@ void RL_Sim::RunModel()
         // this->AttitudeProtect(this->robot_state.imu.quaternion, 75.0f, 75.0f);
 
 #ifdef CSV_LOGGER
-        std::vector<float> tau_est(this->params.Get<int>("num_of_dofs"), 0.0f);
-        for (int i = 0; i < this->params.Get<int>("num_of_dofs"); ++i)
+        std::vector<float> tau_est(sim_dofs, 0.0f);
+        for (int i = 0; i < sim_dofs; ++i)
         {
             tau_est[i] = this->joint_efforts[this->params.Get<std::vector<std::string>>("joint_controller_names")[i]];
         }
@@ -457,13 +602,13 @@ void RL_Sim::Plot()
     this->plot_t.push_back(this->motiontime);
     plt::cla();
     plt::clf();
-    for (int i = 0; i < this->params.Get<int>("num_of_dofs"); ++i)
+    for (int i = 0; i < sim_dofs; ++i)
     {
         this->plot_real_joint_pos[i].erase(this->plot_real_joint_pos[i].begin());
         this->plot_target_joint_pos[i].erase(this->plot_target_joint_pos[i].begin());
         this->plot_real_joint_pos[i].push_back(mj_data->sensordata[i]);
         // this->plot_target_joint_pos[i].push_back();  // TODO
-        plt::subplot(this->params.Get<int>("num_of_dofs"), 1, i + 1);
+        plt::subplot(sim_dofs, 1, i + 1);
         plt::named_plot("_real_joint_pos", this->plot_t, this->plot_real_joint_pos[i], "r");
         plt::named_plot("_target_joint_pos", this->plot_t, this->plot_target_joint_pos[i], "b");
         plt::xlim(this->plot_t.front(), this->plot_t.back());

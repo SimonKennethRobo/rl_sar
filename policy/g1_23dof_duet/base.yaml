@@ -154,3 +154,8 @@ g1_23dof_duet:
   initial_keyframe: 0
   reset_fsm_state: RLFSMStateGetUp
   policy_config: wpsc_s42_15k
+  sim_gantry_height: 2.190
+  sim_gantry_length: 0.86
+  sim_gantry_stiffness: 6000.0
+  sim_gantry_damping: 600.0
+  sim_gantry_initial_pelvis_height: 0.930

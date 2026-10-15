@@ -80,6 +80,9 @@ private:
     std::vector<std::vector<float>> plot_real_joint_pos, plot_target_joint_pos;
     void Plot();
 
+    int sim_dofs;
+    std::vector<int> sim_joint_mapping;
+
     // mujoco
     mjData *mj_data;
     mjModel *mj_model;

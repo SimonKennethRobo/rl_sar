@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Dedicated simulation FSM for robot_lab DUET 23DOF policies (23 measured joints, 13 actor actions).
+// Dedicated FSM for robot_lab DUET 23DOF policies (23 measured joints, 13 actor actions).
 // Arms are held at the training default pose through zero action scale.
 #ifndef FSM_G1_23DOF_DUET_HPP
 #define FSM_G1_23DOF_DUET_HPP
@@ -7,11 +7,36 @@
 
 namespace g1_duet_fsm
 {
+class Passive : public g1_fsm::RLFSMStatePassive
+{
+public:
+    explicit Passive(RL* rl) : g1_fsm::RLFSMStatePassive(rl) {}
+    std::vector<float> kd;
+    void Enter() override
+    {
+        g1_fsm::RLFSMStatePassive::Enter();
+        kd = rl.params.Get<std::vector<float>>("fixed_kd");
+    }
+    void Run() override
+    {
+        // Training damping also avoids unstable explicit PD on low-inertia sim joints.
+        for (int i = 0; i < rl.params.Get<int>("num_of_dofs"); ++i)
+        {
+            fsm_command->motor_command.dq[i] = 0.f;
+            fsm_command->motor_command.kp[i] = 0.f;
+            fsm_command->motor_command.kd[i] = kd[i];
+            fsm_command->motor_command.tau[i] = 0.f;
+        }
+    }
+};
+
 class GetUp : public g1_fsm::RLFSMStateGetUp
 {
 public:
     explicit GetUp(RL* rl) : g1_fsm::RLFSMStateGetUp(rl) {}
     bool pending = true;
+    std::vector<float> pose, kp, kd;
+    float step;
     void Enter() override
     {
         rl.rl_init_done = false;
@@ -21,7 +46,11 @@ public:
         while (rl.output_dof_tau_queue.try_pop(stale)) {}
         // Initial FSM Enter runs before StateController binds measured-state pointers.
         pending = true;
-        std::cout << "\nDUET: A/0 = activate; RB+Y/R = reset.\n";
+        pose = rl.params.Get<std::vector<float>>("default_dof_pos");
+        kp = rl.params.Get<std::vector<float>>("fixed_kp");
+        kd = rl.params.Get<std::vector<float>>("fixed_kd");
+        step = rl.params.Get<float>("dt") / 2.f;
+        std::cout << "\nDUET: hold default pose after 2 s; 1/RB+D-pad up = policy; P/LB+X = passive; 9/B = get down; R/RB+Y = reset.\n";
     }
     void Run() override
     {
@@ -30,12 +59,22 @@ public:
             g1_fsm::RLFSMStateGetUp::Enter();
             pending = false;
         }
-        g1_fsm::RLFSMStateGetUp::Run();
+        percent_getup = std::min(1.f, percent_getup + step);
+        for (int i = 0; i < rl.params.Get<int>("num_of_dofs"); ++i)
+        {
+            fsm_command->motor_command.q[i] = (1.f - percent_getup) * rl.now_state.motor_state.q[i] + percent_getup * pose[i];
+            fsm_command->motor_command.dq[i] = 0.f;
+            fsm_command->motor_command.kp[i] = kp[i];
+            fsm_command->motor_command.kd[i] = kd[i];
+            fsm_command->motor_command.tau[i] = 0.f;
+        }
     }
     std::string CheckChange() override
     {
         auto next = g1_fsm::RLFSMStateGetUp::CheckChange();
-        if (next == state_name_ && percent_getup >= 1.f) return "DuetPolicy";
+        if (next == "RLFSMStatePassive") return next;
+        if (rl.control.current_keyboard == Input::Keyboard::Num9 || rl.control.current_gamepad == Input::Gamepad::B)
+            return "RLFSMStateGetDown";
         return next == "RLFSMStateRLRoboMimicLocomotion" ? "DuetPolicy" : next;
     }
 };
@@ -49,6 +88,7 @@ public:
     float last_posture[5] = {0.f, 0.f, 0.f, 0.f, 0.f};
     void Enter() override
     {
+        rl.InitControl();
         loaded = false;
         rl.rl_init_done = false;
         rl.episode_length_buf = 0;
@@ -109,7 +149,7 @@ public:
     std::shared_ptr<FSMState> CreateState(void* context, const std::string& name) override
     {
         RL* rl = static_cast<RL*>(context);
-        if (name == "RLFSMStatePassive") return std::make_shared<g1_fsm::RLFSMStatePassive>(rl);
+        if (name == "RLFSMStatePassive") return std::make_shared<g1_duet_fsm::Passive>(rl);
         if (name == "RLFSMStateGetUp") return std::make_shared<g1_duet_fsm::GetUp>(rl);
         if (name == "RLFSMStateGetDown") return std::make_shared<g1_fsm::RLFSMStateGetDown>(rl);
         if (name == "DuetPolicy") return std::make_shared<g1_duet_fsm::Policy>(rl);
@@ -122,5 +162,5 @@ public:
 private:
     std::string initial_;
 };
-REGISTER_FSM_FACTORY(G1DuetFSMFactory, "DuetPolicy")
+REGISTER_FSM_FACTORY(G1DuetFSMFactory, "RLFSMStatePassive")
 #endif
