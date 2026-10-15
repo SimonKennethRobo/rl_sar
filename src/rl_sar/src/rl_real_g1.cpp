@@ -4,6 +4,8 @@
  */
 
 #include "rl_real_g1.hpp"
+#include "fsm_g1_23dof_duet.hpp"
+#include <fstream>
 
 RL_Real::RL_Real(int argc, char **argv)
 {
@@ -20,8 +22,9 @@ RL_Real::RL_Real(int argc, char **argv)
 
     // read params from yaml
     this->ang_vel_axis = "body";
-    this->robot_name = "g1";
-    this->ReadYaml(this->robot_name, "base.yaml");
+    this->robot_name = argc > 2 ? argv[2] : "g1";
+    const std::string real_config = std::string(POLICY_DIR) + "/" + this->robot_name + "/base_real.yaml";
+    this->ReadYaml(this->robot_name, std::ifstream(real_config).good() ? "base_real.yaml" : "base.yaml");
 
     // auto load FSM by robot_name
     if (FSMManager::GetInstance().IsTypeSupported(this->robot_name))
@@ -151,6 +154,14 @@ void RL_Real::GetState(RobotState<float> *state)
     this->control.x = this->gamepad.ly;
     this->control.y = -this->gamepad.lx;
     this->control.yaw = -this->gamepad.rx;
+    // Assume Unitree ry is positive with the stick up: positive pitch means forward lean.
+    this->control.pitch = std::clamp(this->gamepad.ry, -1.f, 1.f);
+    this->control.roll = float(this->gamepad.R1.pressed) - float(this->gamepad.L1.pressed);
+    const float dt = this->params.Get<float>("dt");
+    const float waist_target = float(this->gamepad.L2.pressed) - float(this->gamepad.R2.pressed);
+    this->control.waist_yaw += std::clamp(waist_target - this->control.waist_yaw, -2.f * dt, 2.f * dt);
+    this->control.crouch = std::clamp(this->control.crouch + dt *
+        (float(this->gamepad.down.pressed) - float(this->gamepad.up.pressed)), 0.f, 1.f);
 
     state->imu.quaternion[0] = this->unitree_low_state.imu_state().quaternion()[0]; // w
     state->imu.quaternion[1] = this->unitree_low_state.imu_state().quaternion()[1]; // x
@@ -390,8 +401,8 @@ int main(int argc, char **argv)
 {
     if (argc < 2)
     {
-        std::cout << LOGGER::ERROR << "Usage: " << argv[0] << " networkInterface" << std::endl;
-        throw std::runtime_error("Invalid arguments");
+        std::cout << LOGGER::ERROR << "Usage: " << argv[0] << " <networkInterface> [robot_name]" << std::endl;
+        return 1;
     }
     ChannelFactory::Instance()->Init(0, argv[1]);
 
