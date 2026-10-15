@@ -1,0 +1,51 @@
+{
+  "checkpoint": "/home/simon/Projects/Locomotion/robot_lab/artifacts/play/U-Hold-s42-final/model_19999.pt",
+  "checkpoint_sha256": "137f7d3bc605f456562b83557aeb4a703b7e0acd20cf690af129d642a1a067ba",
+  "training_command_ranges": {
+    "lin_vel_x": [
+      -0.5,
+      1.0
+    ],
+    "lin_vel_y": [
+      -0.30000001192092896,
+      0.30000001192092896
+    ],
+    "ang_vel_z": [
+      -0.1,
+      0.1
+    ]
+  },
+  "actor_input": 340,
+  "actor_output": 13,
+  "sar_input": 390,
+  "sar_output": 23,
+  "normalizer": "identity (no normalizer tensors in checkpoint)",
+  "history": "term-major, oldest-first, first observation repeated on reset",
+  "jit_max_abs_error": 0.0,
+  "onnx_max_abs_error": 1.239776611328125e-05,
+  "fixed_test_inputs": 128,
+  "removed_dummy_joints": [
+    "waist_roll_joint",
+    "waist_pitch_joint",
+    "left_wrist_pitch_joint",
+    "left_wrist_yaw_joint",
+    "right_wrist_pitch_joint",
+    "right_wrist_yaw_joint"
+  ],
+  "source_xml_sha256": "59333584df95ab2cc20aefd4a3ac24584935043f673efaf13ece7fbe3d350edf",
+  "model_changes": [
+    "remove6 dummy SDK joints",
+    "source PD gains/effort/armature",
+    "zero additional passive damping/friction",
+    "5ms implicitfast",
+    "home keyframe at source joint pose/root height .8m"
+  ],
+  "hashes": {
+    "policy/g1_23dof_uhold/uhold_s42_20k/policy.pt": "02387c50cd50f46183baf80f5041bcc17076938d9d0927fcc3da44510094cc59",
+    "policy/g1_23dof_uhold/uhold_s42_20k/policy.onnx": "7e45e1fac5e99583afee015d0a8b98d390d0390cad5d9c7f2611288c564d6bfb",
+    "policy/g1_23dof_uhold/uhold_s42_20k/config.yaml": "cbff755188352cc4c776110554ee0912a9cd0f43caaf55e200f33cdb08342a38",
+    "policy/g1_23dof_uhold/base.yaml": "f08f8c4d5b349fbbe6b69e46c2f9b0ad1c609fe14ff3e968a9aea82c97c6dfd0",
+    "src/rl_sar_zoo/g1_23dof_uhold_description/mjcf/robot.xml": "f0c0c794c656c8eabfdbf503ac21633421b768ac6fab433e9db228e3cbce1f6e",
+    "src/rl_sar_zoo/g1_23dof_uhold_description/mjcf/scene.xml": "555506b0d970444c2f208dabbc6915d0106731d9c8f19ba4144545fe6acf6191"
+  }
+}

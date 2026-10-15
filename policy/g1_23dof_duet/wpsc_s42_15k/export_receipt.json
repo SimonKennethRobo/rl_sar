@@ -1,0 +1,55 @@
+{
+  "checkpoint": "/home/simon/Projects/Locomotion/robot_lab/artifacts/play/WPSC-final/s42/model_14999.pt",
+  "checkpoint_sha256": "b9711df81dd9247b7d609e6697050be2adab2d7b1c5bf153f61eb654811f1eda",
+  "env_yaml_sha256": "9c00872329ca8cda8432ef2c1c2acdc2014d07eae19d2a6e4018e06c4091457d",
+  "actor_input": 76,
+  "actor_output": 13,
+  "sar_input": 86,
+  "sar_output": 23,
+  "normalizer": "checkpoint EmpiricalNormalization (x-mean)/(std+0.01), baked into ONNX",
+  "gait_posture": {
+    "nominal": [
+      1.6666666666666667,
+      0.22,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "low": [
+      1.3333333333333333,
+      0.2,
+      -0.04,
+      -0.05,
+      -0.25
+    ],
+    "high": [
+      2.0,
+      0.3,
+      0.04,
+      0.1,
+      0.25
+    ],
+    "note": "frequency/width nominal; roll/pitch/waist from gamepad, piecewise-linear [-1,1] -> [low,high]"
+  },
+  "max_abs_error_vs_reference": 1.9073486328125e-06,
+  "onnx_max_abs_error": 4.76837158203125e-06,
+  "fixed_test_inputs": 128,
+  "source_xml": "/home/simon/Projects/Locomotion/robot_lab/.cache/duet_models/439c21bd2817feedd519475e8301195b95cb6fcb/g1_duet_23dof.xml",
+  "source_xml_sha256": "398d5189f4f3c24a26db22a79a6710a9493abf68b5a6608309e16c7e858cc3b3",
+  "payload_kg": {
+    "left_wrist_roll_rubber_hand": 1.0,
+    "right_wrist_roll_rubber_hand": 1.0,
+    "torso_link": 0.75
+  },
+  "training_differences_not_modelled": [
+    "DelayedPD 0-20 ms actuator latency (sim uses none, inside training range)"
+  ],
+  "arms": "held at training default pose (action scale 0); training used dynamic arm references",
+  "hashes": {
+    "policy/g1_23dof_duet/wpsc_s42_15k/policy.onnx": "a71cb7436a34bc61150fa7683e1fe1070217131d7b16ab1f5b015ed5c60e198d",
+    "policy/g1_23dof_duet/wpsc_s42_15k/config.yaml": "defc921040cc0c963d2d08dc05b820437b81a5c426db95a9b7261fd60cbd69b8",
+    "policy/g1_23dof_duet/base.yaml": "1d34a9b45e30f4a7ceb4b93c596d623dd3c846564d34037a2f9f904db41a1702",
+    "src/rl_sar_zoo/g1_23dof_duet_description/mjcf/robot.xml": "df4ccebd0c3d494cbdddc71ad24cb2b75f0617c35f196715519038aff843e5c3",
+    "src/rl_sar_zoo/g1_23dof_duet_description/mjcf/scene.xml": "555506b0d970444c2f208dabbc6915d0106731d9c8f19ba4144545fe6acf6191"
+  }
+}

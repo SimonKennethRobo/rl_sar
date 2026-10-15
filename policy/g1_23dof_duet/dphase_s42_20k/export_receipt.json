@@ -1,0 +1,31 @@
+{
+  "checkpoint": "/home/simon/Projects/Locomotion/robot_lab/artifacts/play/D-Phase-final/s42/model_19999.pt",
+  "checkpoint_sha256": "856cc29001eb9e3bb80adc6d41e6cc74fe773b38a2165bcc0ba0914bd7d2fe51",
+  "env_yaml_sha256": "8c6cbae072a1b14109bd71868b077cbf50be20d916a31deb73fe6b518190aa3c",
+  "actor_input": 71,
+  "actor_output": 13,
+  "sar_input": 81,
+  "sar_output": 23,
+  "normalizer": "checkpoint EmpiricalNormalization (x-mean)/(std+0.01), baked into ONNX",
+  "history": "none (single frame, as trained)",
+  "max_abs_error_vs_reference": 2.86102294921875e-06,
+  "onnx_max_abs_error": 4.887580871582031e-06,
+  "fixed_test_inputs": 128,
+  "source_xml": "/home/simon/Projects/Locomotion/robot_lab/.cache/duet_models/439c21bd2817feedd519475e8301195b95cb6fcb/g1_duet_23dof.xml",
+  "source_xml_sha256": "398d5189f4f3c24a26db22a79a6710a9493abf68b5a6608309e16c7e858cc3b3",
+  "model_changes": [
+    "general position-servo actuators -> canonical-order motor actuators (rl_sar PD)",
+    "rl_sar sensor layout at imu_in_pelvis",
+    "1 ms implicitfast physics; rl_sar explicit PD at 1 kHz (driver emulation), rl_kd = training kd",
+    "home keyframe",
+    "added payload kg (training-range midpoints by default): {'left_wrist_roll_rubber_hand': 1.0, 'right_wrist_roll_rubber_hand': 1.0, 'torso_link': 0.75}"
+  ],
+  "arms": "held at training default pose (action scale 0); training used dynamic arm references",
+  "hashes": {
+    "policy/g1_23dof_duet/dphase_s42_20k/policy.onnx": "7d4ebfd1926428d6a7aaf9ddabaa941ef72c2e5bd0e28ed67ffd7825fa280f94",
+    "policy/g1_23dof_duet/dphase_s42_20k/config.yaml": "165ca9271ee6a402538a5c68aef4ab65f2a69103ce4393a9935eb48c267aff6a",
+    "policy/g1_23dof_duet/base.yaml": "90687fcaaf8dcd2c088eedbce7216f0223acff3210063a293aa2b230f32bb87d",
+    "src/rl_sar_zoo/g1_23dof_duet_description/mjcf/robot.xml": "df4ccebd0c3d494cbdddc71ad24cb2b75f0617c35f196715519038aff843e5c3",
+    "src/rl_sar_zoo/g1_23dof_duet_description/mjcf/scene.xml": "555506b0d970444c2f208dabbc6915d0106731d9c8f19ba4144545fe6acf6191"
+  }
+}
