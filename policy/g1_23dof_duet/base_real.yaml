@@ -151,7 +151,7 @@ g1_23dof_duet:
   - 0.0
   - 0.0
   - 0.0
-  policy_config: wpsc_s42_15k
+  policy_config: e012_r3a_s42_10k
   arm_dds_topic: rt/rl_sar/arm_cmd
   arm_dds_motor_index: [15, 16, 17, 18, 19, 22, 23, 24, 25, 26]
   arm_dds_limits_lower: [-3.0892, -1.5882, -2.618, -1.0472, -1.97222, -3.0892, -2.2515, -2.618, -1.0472, -1.97222]
